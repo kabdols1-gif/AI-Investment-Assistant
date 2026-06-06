@@ -1,0 +1,46 @@
+broker: kis
+version: "manual"
+source: "한국투자증권 KIS Developers 공식 문서"
+base_urls:
+  paper: ""
+  real: ""
+auth:
+  token:
+    method: ""
+    path: ""
+    tr_id: ""
+features:
+  quote:
+    method: ""
+    path: ""
+    tr_id: ""
+  orderbook:
+    method: ""
+    path: ""
+    tr_id: ""
+  daily_bars:
+    method: ""
+    path: ""
+    tr_id: ""
+  balance:
+    method: ""
+    path: ""
+    tr_id: ""
+  holdings:
+    method: ""
+    path: ""
+    tr_id: ""
+  buyable_amount:
+    method: ""
+    path: ""
+    tr_id: ""
+  place_order:
+    method: ""
+    path: ""
+    tr_id:
+      buy: ""
+      sell: ""
+  cancel_order:
+    method: ""
+    path: ""
+    tr_id: ""

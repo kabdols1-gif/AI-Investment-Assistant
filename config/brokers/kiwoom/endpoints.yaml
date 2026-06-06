@@ -1,0 +1,35 @@
+broker: kiwoom
+version: "manual"
+source: "키움증권 REST API 공식 가이드"
+base_urls:
+  paper: ""
+  real: ""
+auth:
+  token:
+    method: ""
+    path: ""
+features:
+  quote:
+    method: ""
+    path: ""
+  orderbook:
+    method: ""
+    path: ""
+  daily_bars:
+    method: ""
+    path: ""
+  balance:
+    method: ""
+    path: ""
+  holdings:
+    method: ""
+    path: ""
+  buyable_amount:
+    method: ""
+    path: ""
+  place_order:
+    method: ""
+    path: ""
+  cancel_order:
+    method: ""
+    path: ""

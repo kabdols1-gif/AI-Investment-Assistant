@@ -1,0 +1,44 @@
+broker: ls
+version: "manual"
+source: "LS증권 OpenAPI 공식 가이드"
+base_urls:
+  paper: ""
+  real: ""
+auth:
+  token:
+    method: ""
+    path: ""
+    tr_code: ""
+features:
+  quote:
+    method: ""
+    path: ""
+    tr_code: ""
+  orderbook:
+    method: ""
+    path: ""
+    tr_code: ""
+  daily_bars:
+    method: ""
+    path: ""
+    tr_code: ""
+  balance:
+    method: ""
+    path: ""
+    tr_code: ""
+  holdings:
+    method: ""
+    path: ""
+    tr_code: ""
+  buyable_amount:
+    method: ""
+    path: ""
+    tr_code: ""
+  place_order:
+    method: ""
+    path: ""
+    tr_code: ""
+  cancel_order:
+    method: ""
+    path: ""
+    tr_code: ""

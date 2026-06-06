@@ -1,0 +1,1 @@
+"""LS response mapper placeholders."""
