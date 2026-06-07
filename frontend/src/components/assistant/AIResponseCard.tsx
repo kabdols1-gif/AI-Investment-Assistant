@@ -28,8 +28,8 @@ const intentLabels: Record<string, string> = {
   update_notification_setting: "알림 설정 변경",
   open_settings: "설정 열기",
   update_voice_setting: "음성 설정 변경",
-  connect_llm_key: "LLM Key 연결",
-  connect_kb_openapi: "OpenAPI 연결",
+  connect_llm_key: "AI Key 연결",
+  connect_kb_openapi: "증권사 연결",
   unknown: "추가 확인 필요",
 };
 
@@ -100,7 +100,7 @@ export function AIResponseCard({ result }: AIResponseCardProps) {
       {!needsConfirmation && !intent.need_user_clarification && (
         <div className="mt-4 flex items-center gap-2 rounded-lg bg-[#eef6ff] px-3 py-2 text-sm font-semibold text-[#0f4c81]">
           <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-          조회성 요청으로 분류했습니다. 민감정보는 LLM 요청에 포함하지 않습니다.
+          조회성 요청으로 분류했습니다. 민감정보는 AI 요청에 포함하지 않습니다.
         </div>
       )}
     </section>

@@ -18,6 +18,8 @@ export interface RecentViewedStockItem {
   price: string;
   changeRate: string;
   changeDirection: "up" | "down" | "neutral";
+  volume: string;
+  tradingValue: string;
   iconUrl?: string;
 }
 

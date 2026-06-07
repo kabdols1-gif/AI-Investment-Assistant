@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import "./globals.css";
 import { Providers } from "@/components/providers/Providers";
+import { PersistentAppShell } from "@/components/layout";
 
 export const metadata: Metadata = {
   title: "AI 투자비서",
@@ -19,7 +21,11 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body className="antialiased min-h-screen">
-        <Providers>{children}</Providers>
+        <Providers>
+          <Suspense fallback={children}>
+            <PersistentAppShell>{children}</PersistentAppShell>
+          </Suspense>
+        </Providers>
       </body>
     </html>
   );

@@ -84,7 +84,7 @@ export const LLM_PROVIDER_OPTIONS: LLMProviderOption[] = [
     id: "local",
     name: "Local",
     mark: "L",
-    description: "로컬 LLM 서버에 연결",
+    description: "로컬 AI 서버에 연결",
     accentClass: "bg-[#eef2ff] text-[#3730a3] border-[#c7d2fe]",
     defaultBaseUrl: "http://localhost:11434/v1",
     baseUrlPlaceholder: "예: http://localhost:11434/v1",

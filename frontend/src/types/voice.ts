@@ -31,6 +31,7 @@ export interface VoiceCommand {
   screen?:
     | "home"
     | "my-strategy"
+    | "market"
     | "strategy"
     | "watchlist"
     | "portfolio"

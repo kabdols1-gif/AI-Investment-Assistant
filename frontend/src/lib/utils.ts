@@ -5,6 +5,23 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function getChangeClassName(value: number | string): string {
+  const numericValue =
+    typeof value === "string"
+      ? Number(value.replace(/[,%+원주$]/g, "").trim())
+      : value;
+
+  if (Number.isNaN(numericValue)) {
+    if (typeof value === "string" && value.trim().startsWith("+")) return "text-profit";
+    if (typeof value === "string" && value.trim().startsWith("-")) return "text-loss";
+    return "text-neutral";
+  }
+
+  if (numericValue > 0) return "text-profit";
+  if (numericValue < 0) return "text-loss";
+  return "text-neutral";
+}
+
 /**
  * 금액 포맷 (한국 원화)
  */

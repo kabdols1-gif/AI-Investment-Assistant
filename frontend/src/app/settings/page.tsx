@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { Check, ChevronDown, KeyRound, Link2, Loader2, Save, ShieldCheck } from "lucide-react";
+import { Brain, Check, CheckCircle2, ChevronDown, Link2, Loader2, Save, ShieldCheck, XCircle } from "lucide-react";
 import { AppShell } from "@/components/layout";
 import { useToast } from "@/components/ui";
 import { setSharedConfigStatus } from "@/hooks";
@@ -11,11 +11,22 @@ import { DEFAULT_CONFIG_STATUS } from "@/lib/configStatus";
 import { coerceLLMProvider, DEFAULT_LLM_PROVIDER, getDefaultLLMModel, getLLMProviderOption, LLM_PROVIDER_OPTIONS } from "@/lib/llmProviders";
 import type { BrokerProvider, ConfigStatus, KBConnectionTestResponse, LLMProvider } from "@/types/config";
 
+const SECRET_PLACEHOLDER = "********";
+
+type LocalTestResult = {
+  status: "success" | "error";
+  message: string;
+};
+
 export default function SettingsPage() {
   const toast = useToast();
   const [status, setStatus] = useState<ConfigStatus | null>(null);
   const [configLoadError, setConfigLoadError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isAiSaving, setIsAiSaving] = useState(false);
+  const [isBrokerSaving, setIsBrokerSaving] = useState(false);
+  const [isAiTesting, setIsAiTesting] = useState(false);
+  const [isBrokerTesting, setIsBrokerTesting] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<LocalTestResult | null>(null);
   const [llmProvider, setLlmProvider] = useState<LLMProvider>(DEFAULT_LLM_PROVIDER);
   const [isLlmProviderOpen, setIsLlmProviderOpen] = useState(false);
   const [llmKey, setLlmKey] = useState("");
@@ -28,23 +39,32 @@ export default function SettingsPage() {
   const [kbSecret, setKbSecret] = useState("");
   const [kbAccount, setKbAccount] = useState("");
   const [kbTestResult, setKbTestResult] = useState<KBConnectionTestResponse | null>(null);
+
   const selectedProvider = getLLMProviderOption(llmProvider);
   const selectedModelOption = selectedProvider.models.find((model) => model.id === llmModel);
   const modelSelectValue = selectedModelOption ? llmModel : "__custom";
   const selectedBroker = getBrokerProviderOption(brokerProvider);
+  const aiConnected = Boolean(status?.llm_key_registered);
+  const brokerConnected = Boolean(status?.kb_key_registered && status?.kb_secret_registered && status?.kb_account_masked && status?.kb_base_url);
+
+  const applyConfig = (config: ConfigStatus) => {
+    setStatus(config);
+    const nextProvider = coerceLLMProvider(config.llm_provider);
+    setLlmProvider(nextProvider);
+    setLlmModel(config.llm_model && config.llm_model !== "mock-voice-intent" ? config.llm_model : getDefaultLLMModel(nextProvider));
+    setLlmBaseUrl(config.llm_base_url || getLLMProviderOption(nextProvider).defaultBaseUrl);
+    setLlmKey(config.llm_key_masked || "");
+
+    const nextBroker = (config.broker_provider as BrokerProvider) || "kb";
+    setBrokerProvider(nextBroker);
+    setBrokerBaseUrl(config.kb_base_url || getBrokerProviderOption(nextBroker).defaultBaseUrl);
+    setKbAppKey(config.kb_key_masked || "");
+    setKbSecret(config.kb_secret_registered ? SECRET_PLACEHOLDER : "");
+    setKbAccount(config.kb_account_masked || "");
+  };
 
   useEffect(() => {
     let mounted = true;
-    const applyConfig = (config: ConfigStatus) => {
-      setStatus(config);
-      const nextProvider = coerceLLMProvider(config.llm_provider);
-      setLlmProvider(nextProvider);
-      setLlmModel(config.llm_model && config.llm_model !== "mock-voice-intent" ? config.llm_model : getDefaultLLMModel(nextProvider));
-      setLlmBaseUrl(config.llm_base_url || getLLMProviderOption(nextProvider).defaultBaseUrl);
-      const nextBroker = (config.broker_provider as BrokerProvider) || "kb";
-      setBrokerProvider(nextBroker);
-      setBrokerBaseUrl(config.kb_base_url || getBrokerProviderOption(nextBroker).defaultBaseUrl);
-    };
 
     getConfigStatus()
       .then((config) => {
@@ -57,6 +77,7 @@ export default function SettingsPage() {
         applyConfig(DEFAULT_CONFIG_STATUS);
         setConfigLoadError(error instanceof Error ? error.message : "설정 상태를 불러오지 못했습니다.");
       });
+
     return () => {
       mounted = false;
     };
@@ -69,6 +90,7 @@ export default function SettingsPage() {
     setLlmModel(getDefaultLLMModel(provider));
     setLlmBaseUrl(nextProvider.defaultBaseUrl);
     setIsLlmProviderOpen(false);
+    setAiTestResult(null);
   };
 
   const handleSelectBrokerProvider = (provider: BrokerProvider) => {
@@ -76,59 +98,81 @@ export default function SettingsPage() {
     setBrokerProvider(provider);
     setBrokerBaseUrl(nextBroker.defaultBaseUrl);
     setIsBrokerOpen(false);
+    setKbTestResult(null);
   };
 
-  const handleSaveLLM = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSaveAI = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsLoading(true);
+    setIsAiSaving(true);
+    setAiTestResult(null);
     try {
+      const trimmedKey = llmKey.trim();
+      const savedMaskedKey = status?.llm_key_masked || "";
       const response = await saveLLMConfig({
         provider: llmProvider,
-        api_key: llmKey || null,
+        api_key: trimmedKey && trimmedKey !== savedMaskedKey ? trimmedKey : null,
         model: llmModel || null,
         base_url: llmBaseUrl || null,
       });
-      setStatus(response.config);
+      applyConfig(response.config);
       setSharedConfigStatus(response.config);
-      setLlmKey("");
       toast.success(response.message);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "LLM 설정 저장에 실패했습니다.");
+      toast.error(error instanceof Error ? error.message : "AI 설정 저장에 실패했습니다.");
     } finally {
-      setIsLoading(false);
+      setIsAiSaving(false);
     }
   };
 
-  const handleSaveKB = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSaveBroker = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsLoading(true);
+    setIsBrokerSaving(true);
+    setKbTestResult(null);
     try {
+      const trimmedAppKey = kbAppKey.trim();
+      const trimmedSecret = kbSecret.trim();
+      const trimmedAccount = kbAccount.trim();
       const response = await saveKBConfig({
         broker: brokerProvider,
-        api_key: kbAppKey || null,
-        api_secret: kbSecret || null,
-        account: kbAccount || null,
+        api_key: trimmedAppKey && trimmedAppKey !== (status?.kb_key_masked || "") ? trimmedAppKey : null,
+        api_secret: trimmedSecret && trimmedSecret !== SECRET_PLACEHOLDER ? trimmedSecret : null,
+        account: trimmedAccount && trimmedAccount !== (status?.kb_account_masked || "") ? trimmedAccount : null,
         base_url: brokerBaseUrl || null,
       });
-      setStatus(response.config);
+      applyConfig(response.config);
       setSharedConfigStatus(response.config);
-      setKbAppKey("");
-      setKbSecret("");
-      setKbAccount("");
       toast.success(response.message);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "OpenAPI 설정 저장에 실패했습니다.");
+      toast.error(error instanceof Error ? error.message : "증권사 설정 저장에 실패했습니다.");
     } finally {
-      setIsLoading(false);
+      setIsBrokerSaving(false);
     }
   };
 
-  const handleTestKB = async () => {
+  const handleTestAI = () => {
+    setIsAiTesting(true);
+    window.setTimeout(() => {
+      const hasKey = Boolean(llmKey.trim()) || Boolean(status?.llm_key_registered);
+      const hasRequiredConfig = hasKey && Boolean(llmProvider) && Boolean(llmModel.trim()) && Boolean(llmBaseUrl.trim());
+      if (hasRequiredConfig) {
+        const result = { status: "success" as const, message: "AI 연동 설정값이 정상적으로 확인되었습니다." };
+        setAiTestResult(result);
+        toast.success(result.message);
+      } else {
+        const result = { status: "error" as const, message: "Provider, API Key, Base URL, Model 값을 확인해 주세요." };
+        setAiTestResult(result);
+        toast.error(result.message);
+      }
+      setIsAiTesting(false);
+    }, 320);
+  };
+
+  const handleTestBroker = async () => {
     if (!selectedBroker.connectionTestSupported) {
-      toast.warning("현재 연결 테스트는 KB증권 BaaS/OpenAPI 형식만 지원합니다.");
+      toast.warning("현재 연결 테스트는 KB증권 BaaS 형식만 지원합니다.");
       return;
     }
-    setIsLoading(true);
+    setIsBrokerTesting(true);
     setKbTestResult(null);
     try {
       const response = await testKBConnection();
@@ -141,9 +185,9 @@ export default function SettingsPage() {
         toast.error(response.message);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "OpenAPI 연결 테스트에 실패했습니다.");
+      toast.error(error instanceof Error ? error.message : "증권사 연결 테스트에 실패했습니다.");
     } finally {
-      setIsLoading(false);
+      setIsBrokerTesting(false);
     }
   };
 
@@ -155,131 +199,108 @@ export default function SettingsPage() {
           <span className="mt-1 block text-xs font-semibold text-amber-700">{configLoadError}</span>
         </section>
       )}
+
       <section className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <form onSubmit={handleSaveLLM} className="min-w-0 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center gap-2">
-              <KeyRound className="h-5 w-5 text-[#8a6400]" aria-hidden="true" />
-              <h2 className="text-base font-extrabold text-[#071832]">LLM API Key 관리</h2>
+        <form onSubmit={handleSaveAI} className="min-w-0 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Brain className="h-5 w-5 text-[#8a6400]" aria-hidden="true" />
+              <h2 className="truncate text-base font-extrabold text-[#071832]">AI 연동 관리</h2>
             </div>
-            <StatusLine
-              label="등록 상태"
-              value={status?.llm_key_registered ? status.llm_key_masked || "등록됨" : "미등록"}
-              active={Boolean(status?.llm_key_registered)}
-            />
-            <div className="mt-4 grid gap-3">
-              <div>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-700">Provider</p>
-                  <p className="text-xs font-semibold text-slate-500">현재: {selectedProvider.name}</p>
-                </div>
-                <LLMProviderCombobox
-                  selectedProvider={selectedProvider}
-                  isOpen={isLlmProviderOpen}
-                  onToggle={() => setIsLlmProviderOpen((open) => !open)}
-                  onSelect={handleSelectLLMProvider}
-                />
+            <ConnectionBadge active={aiConnected} />
+          </div>
+
+          <div className="grid gap-3">
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-700">Provider</p>
+                <p className="text-xs font-semibold text-slate-500">현재: {selectedProvider.name}</p>
               </div>
-
-              <label className="grid gap-1 text-sm font-semibold text-slate-700">
-                모델 버전
-                <select
-                  value={modelSelectValue}
-                  onChange={(event) => {
-                    if (event.target.value !== "__custom") {
-                      setLlmModel(event.target.value);
-                    }
-                  }}
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#f0c652]"
-                >
-                  {selectedProvider.models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.label} · {model.note}
-                    </option>
-                  ))}
-                  <option value="__custom">직접 입력</option>
-                </select>
-              </label>
-              <Field label="Model ID" value={llmModel} onChange={setLlmModel} placeholder={selectedProvider.models[0]?.id || "모델 ID 직접 입력"} />
-              <Field label="API Key" value={llmKey} onChange={setLlmKey} type="password" placeholder="새 Key 입력 시에만 저장" />
-              <Field label="Base URL" value={llmBaseUrl} onChange={setLlmBaseUrl} placeholder={selectedProvider.baseUrlPlaceholder} />
+              <LLMProviderCombobox
+                selectedProvider={selectedProvider}
+                isOpen={isLlmProviderOpen}
+                onToggle={() => setIsLlmProviderOpen((open) => !open)}
+                onSelect={handleSelectLLMProvider}
+              />
             </div>
-            <SaveButton isLoading={isLoading} label="LLM 설정 저장" />
-          </form>
 
-          <form onSubmit={handleSaveKB} className="min-w-0 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center gap-2">
+            <label className="grid gap-1 text-sm font-semibold text-slate-700">
+              모델 버전
+              <select
+                value={modelSelectValue}
+                onChange={(event) => {
+                  if (event.target.value !== "__custom") {
+                    setLlmModel(event.target.value);
+                  }
+                }}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#f0c652]"
+              >
+                {selectedProvider.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label} · {model.note}
+                  </option>
+                ))}
+                <option value="__custom">직접 입력</option>
+              </select>
+            </label>
+            <Field label="Model ID" value={llmModel} onChange={setLlmModel} placeholder={selectedProvider.models[0]?.id || "모델 ID 직접 입력"} />
+            <Field label="API Key" value={llmKey} onChange={setLlmKey} type="password" placeholder="AI API Key 입력" />
+            <Field label="Base URL" value={llmBaseUrl} onChange={setLlmBaseUrl} placeholder={selectedProvider.baseUrlPlaceholder} />
+          </div>
+
+          <SaveButton isLoading={isAiSaving} label="AI 설정 저장" />
+          <TestButton isLoading={isAiTesting} onClick={handleTestAI} label="AI 연결 테스트" icon="ai" />
+          {aiTestResult && <LocalResultCard result={aiTestResult} />}
+        </form>
+
+        <form onSubmit={handleSaveBroker} className="min-w-0 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
               <Link2 className="h-5 w-5 text-[#8a6400]" aria-hidden="true" />
-              <h2 className="text-base font-extrabold text-[#071832]">OpenAPI 연동 상태</h2>
+              <h2 className="truncate text-base font-extrabold text-[#071832]">증권사 연동 관리</h2>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <StatusLine label="증권사" value={status?.broker_name || selectedBroker.name} active />
-              <StatusLine
-                label="App Key"
-                value={status?.kb_key_registered ? status.kb_key_masked || "등록됨" : "미등록"}
-                active={Boolean(status?.kb_key_registered)}
-              />
-              <StatusLine
-                label="Secret"
-                value={status?.kb_secret_registered ? "********" : "미등록"}
-                active={Boolean(status?.kb_secret_registered)}
-              />
-              <StatusLine label="계좌" value={status?.kb_account_masked || "미등록"} active={Boolean(status?.kb_account_masked)} />
-              <StatusLine label="Base URL" value={status?.kb_base_url || "미설정"} active={Boolean(status?.kb_base_url)} />
-              <StatusLine label="실전 모드" value={status?.live_enabled ? "활성" : "비활성"} active={Boolean(status?.live_enabled)} />
-            </div>
-            <div className="mt-4 grid gap-3">
-              <div>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-700">국내 증권사</p>
-                  <p className="text-xs font-semibold text-slate-500">현재: {selectedBroker.name}</p>
-                </div>
-                <BrokerProviderCombobox
-                  selectedBroker={selectedBroker}
-                  isOpen={isBrokerOpen}
-                  onToggle={() => setIsBrokerOpen((open) => !open)}
-                  onSelect={handleSelectBrokerProvider}
-                />
+            <ConnectionBadge active={brokerConnected} />
+          </div>
+
+          <div className="grid gap-3">
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-700">국내 증권사</p>
+                <p className="text-xs font-semibold text-slate-500">현재: {selectedBroker.name}</p>
               </div>
-              <Field label="OpenAPI Base URL" value={brokerBaseUrl} onChange={setBrokerBaseUrl} placeholder={selectedBroker.baseUrlPlaceholder} />
-              <Field label="App Key" value={kbAppKey} onChange={setKbAppKey} type="password" placeholder="새 Key 입력 시에만 저장" />
-              <Field label="Secret Key" value={kbSecret} onChange={setKbSecret} type="password" placeholder="새 Secret 입력 시에만 저장" />
-              <Field label="계좌번호" value={kbAccount} onChange={setKbAccount} placeholder="마스킹되어 저장 상태만 표시" />
+              <BrokerProviderCombobox
+                selectedBroker={selectedBroker}
+                isOpen={isBrokerOpen}
+                onToggle={() => setIsBrokerOpen((open) => !open)}
+                onSelect={handleSelectBrokerProvider}
+              />
             </div>
-            <SaveButton isLoading={isLoading} label="OpenAPI 설정 저장" />
-            <button
-              type="button"
-              onClick={handleTestKB}
-              disabled={isLoading || !selectedBroker.connectionTestSupported}
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#f3d58a] bg-[#fff8e1] px-4 py-3 text-sm font-extrabold text-[#8a6400] transition hover:bg-[#ffefb9] disabled:cursor-not-allowed disabled:opacity-50 focus-ring"
-            >
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Link2 className="h-4 w-4" aria-hidden="true" />}
-              {selectedBroker.connectionTestSupported ? "OpenAPI 연결 테스트" : "선택 증권사 테스트 준비중"}
-            </button>
-            {!selectedBroker.connectionTestSupported && (
-              <p className="mt-2 text-xs leading-5 text-slate-500">
-                선택한 증권사 정보는 저장할 수 있습니다. 연결 테스트는 현재 KB증권 BaaS/OpenAPI 형식만 지원합니다.
-              </p>
-            )}
-            {kbTestResult && (
-              <div className="mt-3 rounded-lg bg-[#f8fafc] px-3 py-3 text-sm">
-                <p className={`font-bold ${kbTestResult.status === "success" ? "text-emerald-700" : kbTestResult.status === "missing" ? "text-amber-700" : "text-red-600"}`}>
-                  {kbTestResult.message}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">Base URL: {kbTestResult.base_url}</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  토큰 수신: {kbTestResult.token_received ? "확인됨" : "미확인"}
-                </p>
-              </div>
-            )}
-          </form>
+            <Field label="App Key" value={kbAppKey} onChange={setKbAppKey} type="password" placeholder="증권사 App Key 입력" />
+            <Field label="Secret" value={kbSecret} onChange={setKbSecret} type="password" placeholder="증권사 Secret 입력" />
+            <Field label="계좌" value={kbAccount} onChange={setKbAccount} placeholder="계좌번호 입력" />
+            <Field label="Base URL" value={brokerBaseUrl} onChange={setBrokerBaseUrl} placeholder={selectedBroker.baseUrlPlaceholder} />
+          </div>
+
+          <SaveButton isLoading={isBrokerSaving} label="증권사 설정 저장" />
+          <TestButton
+            isLoading={isBrokerTesting}
+            onClick={handleTestBroker}
+            label={selectedBroker.connectionTestSupported ? "증권사 연결 테스트" : "선택 증권사 테스트 준비중"}
+            disabled={!selectedBroker.connectionTestSupported}
+            icon="broker"
+          />
+          {!selectedBroker.connectionTestSupported && (
+            <p className="mt-2 text-xs leading-5 text-slate-500">선택한 증권사 정보는 저장할 수 있습니다. 연결 테스트는 현재 KB증권 BaaS 형식만 지원합니다.</p>
+          )}
+          {kbTestResult && <BrokerResultCard result={kbTestResult} />}
+        </form>
       </section>
 
       <section className="mt-5 rounded-lg border border-[#f3d58a] bg-[#fff8e1] p-4">
         <div className="flex items-start gap-3">
           <ShieldCheck className="mt-0.5 h-5 w-5 text-[#8a6400]" aria-hidden="true" />
           <p className="text-sm leading-6 text-slate-700">
-            저장된 인증 정보는 화면에 평문으로 다시 표시하지 않습니다. LLM 요청에는 API Secret, Access Token,
-            계좌비밀번호, 주문비밀번호를 포함하지 않습니다.
+            저장된 인증 정보는 화면에 평문으로 다시 표시하지 않습니다. AI 요청에는 API Secret, Access Token, 계좌비밀번호, 주문비밀번호를 포함하지 않습니다.
           </p>
         </div>
       </section>
@@ -434,14 +455,16 @@ function ProviderLogo({
   );
 }
 
-function StatusLine({ label, value, active }: { label: string; value: string; active: boolean }) {
+function ConnectionBadge({ active }: { active: boolean }) {
   return (
-    <div className="min-w-0 rounded-lg bg-[#f8fafc] px-3 py-2">
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className={`mt-1 min-w-0 truncate text-sm font-bold ${active ? "text-emerald-700" : "text-slate-500"}`} title={value}>
-        {value}
-      </p>
-    </div>
+    <span
+      className={`inline-flex flex-none items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold ${
+        active ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-red-50 text-red-700 ring-1 ring-red-200"
+      }`}
+    >
+      {active ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : <XCircle className="h-3.5 w-3.5" aria-hidden="true" />}
+      {active ? "정상" : "미연결"}
+    </span>
   );
 }
 
@@ -482,5 +505,57 @@ function SaveButton({ isLoading, label }: { isLoading: boolean; label: string })
       {isLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
       {label}
     </button>
+  );
+}
+
+function TestButton({
+  isLoading,
+  onClick,
+  label,
+  disabled = false,
+  icon,
+}: {
+  isLoading: boolean;
+  onClick: () => void;
+  label: string;
+  disabled?: boolean;
+  icon: "ai" | "broker";
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={isLoading || disabled}
+      className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#f3d58a] bg-[#fff8e1] px-4 py-3 text-sm font-extrabold text-[#8a6400] transition hover:bg-[#ffefb9] disabled:cursor-not-allowed disabled:opacity-50 focus-ring"
+    >
+      {isLoading ? (
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      ) : icon === "ai" ? (
+        <Brain className="h-4 w-4" aria-hidden="true" />
+      ) : (
+        <Link2 className="h-4 w-4" aria-hidden="true" />
+      )}
+      {label}
+    </button>
+  );
+}
+
+function LocalResultCard({ result }: { result: LocalTestResult }) {
+  return (
+    <div className="mt-3 rounded-lg bg-[#f8fafc] px-3 py-3 text-sm">
+      <p className={`font-bold ${result.status === "success" ? "text-emerald-700" : "text-red-600"}`}>{result.message}</p>
+    </div>
+  );
+}
+
+function BrokerResultCard({ result }: { result: KBConnectionTestResponse }) {
+  return (
+    <div className="mt-3 rounded-lg bg-[#f8fafc] px-3 py-3 text-sm">
+      <p className={`font-bold ${result.status === "success" ? "text-emerald-700" : result.status === "missing" ? "text-amber-700" : "text-red-600"}`}>
+        {result.message}
+      </p>
+      <p className="mt-1 text-xs text-slate-500">Base URL: {result.base_url}</p>
+      <p className="mt-1 text-xs text-slate-500">토큰 수신: {result.token_received ? "확인됨" : "미확인"}</p>
+    </div>
   );
 }

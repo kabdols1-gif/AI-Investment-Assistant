@@ -94,7 +94,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       setSharedConfigStatus(response.config);
       setLlmApiKey("");
     } catch (error) {
-      console.error("Failed to save LLM config:", error);
+      console.error("Failed to save AI config:", error);
     } finally {
       setIsSavingConfig(false);
     }
@@ -296,7 +296,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             </div>
             <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg space-y-3">
               <div className="flex min-w-0 items-center justify-between gap-3 text-sm">
-                <span className="text-slate-600 dark:text-slate-400">LLM 키</span>
+                <span className="text-slate-600 dark:text-slate-400">AI 키</span>
                 <span className="min-w-0 max-w-[12rem] truncate text-right font-mono text-xs text-slate-500" title={configStatus?.llm_key_masked || undefined}>
                   {configStatus?.llm_key_registered ? configStatus.llm_key_masked : "키 없음"}
                 </span>
@@ -347,7 +347,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           <section className="space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
               <KeyRound className="w-4 h-4 text-primary" />
-              OpenAPI 키
+              증권사 키
             </div>
             <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg space-y-3">
               <div className="grid grid-cols-2 gap-2 text-sm">
@@ -400,7 +400,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 className="w-full py-2 px-4 rounded-lg text-sm font-medium bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {isSavingConfig ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                OpenAPI 키 저장
+                증권사 키 저장
               </button>
             </div>
           </section>

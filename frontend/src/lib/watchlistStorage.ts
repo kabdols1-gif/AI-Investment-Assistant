@@ -53,11 +53,12 @@ export function writeStoredWatchItems(items: WatchItem[]) {
 }
 
 export function createWatchItemFromSymbol(symbol: StockSymbol): WatchItem {
+  const isOverseas = symbol.exchange_name === "NASDAQ" || (symbol.code.length <= 5 && /[A-Z]/.test(symbol.code));
   return {
     symbol: symbol.code,
     name: symbol.name,
-    market: "domestic",
-    marketLabel: "국내",
+    market: isOverseas ? "overseas" : "domestic",
+    marketLabel: isOverseas ? "해외" : "국내",
     exchange: symbol.exchange_name || symbol.exchange.toUpperCase(),
     price: "조회 전",
     changeRate: "0.00%",

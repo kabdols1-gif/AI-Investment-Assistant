@@ -1,20 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Calculator,
   ChevronDown,
-  Maximize2,
-  MoreHorizontal,
+  ExternalLink,
   Minus,
+  Newspaper,
   Plus,
   RotateCcw,
   Settings,
-  Star,
 } from "lucide-react";
 import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
 import { useToast } from "@/components/ui";
 import type { BrokerProviderOption } from "@/lib/brokerProviders";
+import { tradingWorkspaceByStockId, watchItems } from "@/lib/mockData";
+import { readStoredWatchItems, WATCHLIST_STORAGE_EVENT, type WatchItem } from "@/lib/watchlistStorage";
 import type {
   BalanceEvaluationRow,
   BrokerTradeRow,
@@ -27,42 +28,65 @@ import type {
   TradingWorkspaceData,
 } from "@/types/trading";
 
-type InfoTab = "호가" | "체결" | "거래원";
+type LeftInfoTab = "관심종목" | "현재가";
+type MarketInfoTab = "호가" | "체결" | "거래원";
 type OrderTab = "매수" | "매도" | "정정" | "취소";
-type BottomTab = "차트" | "예수금" | "주문내역" | "매매손익" | "잔고평가";
+type BottomTab = "차트" | "예수금" | "주문내역" | "매매손익" | "잔고평가" | "뉴스";
+type WorkspaceOrderSide = "buy" | "sell";
 
-const infoTabs: InfoTab[] = ["호가", "체결", "거래원"];
+const leftInfoTabs: LeftInfoTab[] = ["관심종목", "현재가"];
+const marketInfoTabs: MarketInfoTab[] = ["호가", "체결", "거래원"];
 const orderTabs: OrderTab[] = ["매수", "매도", "정정", "취소"];
-const bottomTabs: BottomTab[] = ["차트", "예수금", "주문내역", "매매손익", "잔고평가"];
+const bottomTabs: BottomTab[] = ["차트", "예수금", "주문내역", "매매손익", "잔고평가", "뉴스"];
 const orderTypes = ["보통", "시장가", "조건부", "최유리"];
 const ratios = ["10%", "25%", "50%", "100%", "직접"];
 const chartPeriods = ["1분", "5분", "15분", "30분", "일", "주", "월"];
+const dualExchangeStockIds = new Set(["005930", "000660", "035720", "035420", "373220", "005380", "066570"]);
 
 interface TradingWorkspaceProps {
   data: TradingWorkspaceData;
   brokerConnected: boolean;
   brokerOption: BrokerProviderOption;
+  initialOrderQuantity?: string | null;
+  initialOrderSide?: WorkspaceOrderSide | null;
 }
 
-export function TradingWorkspace({ data, brokerConnected, brokerOption }: TradingWorkspaceProps) {
+export function TradingWorkspace({ data, brokerConnected, brokerOption, initialOrderQuantity, initialOrderSide }: TradingWorkspaceProps) {
   const toast = useToast();
-  const [infoTab, setInfoTab] = useState<InfoTab>("호가");
-  const [orderTab, setOrderTab] = useState<OrderTab>("매수");
+  const initialOrderTab = initialOrderSide === "sell" ? "매도" : "매수";
+  const initialQuantity = normalizeOrderQuantity(initialOrderQuantity);
+  const [leftInfoTab, setLeftInfoTab] = useState<LeftInfoTab>("관심종목");
+  const [marketInfoTab, setMarketInfoTab] = useState<MarketInfoTab>("호가");
+  const [orderTab, setOrderTab] = useState<OrderTab>(initialOrderTab);
   const [bottomTab, setBottomTab] = useState<BottomTab>("차트");
   const [orderType, setOrderType] = useState("보통");
-  const [ratio, setRatio] = useState("직접");
+  const [ratio, setRatio] = useState(initialOrderSide === "sell" && initialQuantity !== "0" ? "100%" : "직접");
   const [period, setPeriod] = useState("일");
-  const [favorite, setFavorite] = useState(true);
-  const [autoPriority, setAutoPriority] = useState(true);
-  const [autoConfirm, setAutoConfirm] = useState(false);
-  const [price, setPrice] = useState(data.stock.price);
-  const [quantity, setQuantity] = useState("0");
+  const [orderDraft, setOrderDraft] = useState({
+    stockId: data.stock.id,
+    price: data.stock.price,
+    quantity: initialQuantity,
+  });
+  const [watchlistItems, setWatchlistItems] = useState<WatchItem[]>([]);
+  const draftPrice = orderDraft.stockId === data.stock.id ? orderDraft.price : data.stock.price;
+  const draftQuantity = orderDraft.stockId === data.stock.id ? orderDraft.quantity : "0";
+
+  useEffect(() => {
+    const syncWatchlist = () => {
+      const storedItems = readStoredWatchItems();
+      setWatchlistItems(storedItems.length > 0 ? storedItems : (watchItems as WatchItem[]));
+    };
+
+    syncWatchlist();
+    window.addEventListener(WATCHLIST_STORAGE_EVENT, syncWatchlist);
+    return () => window.removeEventListener(WATCHLIST_STORAGE_EVENT, syncWatchlist);
+  }, []);
 
   const orderAmount = useMemo(() => {
-    const priceNumber = toNumber(price);
-    const quantityNumber = toNumber(quantity);
+    const priceNumber = toNumber(draftPrice);
+    const quantityNumber = toNumber(draftQuantity);
     return priceNumber * quantityNumber;
-  }, [price, quantity]);
+  }, [draftPrice, draftQuantity]);
 
   const previewOrder = () => {
     toast.info(`${data.stock.name} ${orderTab} 주문 preview가 생성되었습니다. 실전 주문은 제출되지 않았습니다.`);
@@ -71,72 +95,124 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption }: Tradin
   const resetOrder = () => {
     setOrderType("보통");
     setRatio("직접");
-    setPrice(data.stock.price);
-    setQuantity("0");
-    setAutoPriority(true);
-    setAutoConfirm(false);
+    setOrderDraft({
+      stockId: data.stock.id,
+      price: data.stock.price,
+      quantity: "0",
+    });
+  };
+
+  const handleWatchItemSelect = (symbol: string) => {
+    window.dispatchEvent(new CustomEvent("watchlist-stock-selected", { detail: { id: symbol } }));
+  };
+
+  const handleBalanceStockSell = (row: BalanceEvaluationRow) => {
+    const stock = getTradingStockByName(row.name);
+    if (!stock) {
+      toast.warning(`${row.name} 매도 주문 정보를 찾을 수 없습니다.`);
+      return;
+    }
+
+    setOrderTab("매도");
+    setOrderType("보통");
+    setRatio("100%");
+    setOrderDraft({
+      stockId: stock.id,
+      price: stock.price,
+      quantity: getOrderQuantityFromBalance(row.quantity),
+    });
+    window.dispatchEvent(new CustomEvent("portfolio-stock-selected", { detail: { id: stock.id } }));
+    window.requestAnimationFrame(() => {
+      document.getElementById("trading-order-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    toast.info(`${stock.name} 매도 주문 화면으로 전환했습니다.`);
+  };
+
+  const handlePriceChange = (value: string) => {
+    setOrderDraft((current) => ({
+      stockId: data.stock.id,
+      price: value,
+      quantity: current.stockId === data.stock.id ? current.quantity : "0",
+    }));
+  };
+
+  const handleQuantityChange = (value: string) => {
+    setOrderDraft((current) => ({
+      stockId: data.stock.id,
+      price: current.stockId === data.stock.id ? current.price : data.stock.price,
+      quantity: value,
+    }));
   };
 
   return (
     <div className="space-y-2">
       <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-        <StockHeader data={data} favorite={favorite} onFavoriteToggle={() => setFavorite((current) => !current)} />
+        <StockHeader data={data} />
 
-        <div className="mt-2 grid gap-2 2xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
-          <MarketInfoPanel activeTab={infoTab} data={data} onTabChange={setInfoTab} />
-          <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption}>
-            <OrderFormPanel
-              activeTab={orderTab}
-              amount={orderAmount}
-              autoConfirm={autoConfirm}
-              autoPriority={autoPriority}
-              orderType={orderType}
-              price={price}
-              quantity={quantity}
-              ratio={ratio}
-              onAutoConfirmChange={setAutoConfirm}
-              onAutoPriorityChange={setAutoPriority}
-              onOrderTypeChange={setOrderType}
-              onPreview={previewOrder}
-              onPriceChange={setPrice}
-              onQuantityChange={setQuantity}
-              onRatioChange={setRatio}
-              onReset={resetOrder}
-              onTabChange={setOrderTab}
+        <div className="mt-2 grid items-stretch gap-2 xl:grid-cols-[minmax(300px,0.74fr)_minmax(0,1.74fr)]">
+          <div className="min-h-0 xl:row-span-2">
+            <LeftStockPanel
+              activeTab={leftInfoTab}
+              data={data}
+              watchlistItems={watchlistItems}
+              onSelectWatchItem={handleWatchItemSelect}
+              onTabChange={setLeftInfoTab}
             />
-          </BrokerConnectionGate>
-        </div>
-      </section>
+          </div>
 
-      <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 px-3 pt-2">
-          {bottomTabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setBottomTab(tab)}
-            className={`h-8 rounded-t-md px-3 text-xs font-extrabold transition focus-ring ${
-                tab === bottomTab
-                  ? "border-b-2 border-[#1d4ed8] text-[#071832]"
-                  : "text-slate-500 hover:bg-[#fff8e1] hover:text-[#071832]"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-        <div className="p-2">
-          {bottomTab === "차트" && (
-            <ChartPanel candles={data.chartCandles} period={period} onPeriodChange={setPeriod} stockName={data.stock.name} />
-          )}
-          {bottomTab !== "차트" && (
-            <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption} showNotice={false}>
-              {bottomTab === "예수금" && <CashPanel rows={data.cashSummary} />}
-              {bottomTab === "주문내역" && <OrderHistoryPanel rows={data.orderHistory} />}
-              {bottomTab === "매매손익" && <ProfitLossPanel rows={data.profitLoss} />}
-              {bottomTab === "잔고평가" && <BalancePanel rows={data.balanceEvaluation} />}
+          <div className="grid min-w-0 gap-2 2xl:grid-cols-[minmax(380px,1fr)_minmax(360px,0.76fr)]">
+            <MarketInfoPanel activeTab={marketInfoTab} data={data} onTabChange={setMarketInfoTab} />
+            <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption}>
+              <OrderFormPanel
+                activeTab={orderTab}
+                amount={orderAmount}
+                orderType={orderType}
+                price={draftPrice}
+                quantity={draftQuantity}
+                ratio={ratio}
+                onOrderTypeChange={setOrderType}
+                onPreview={previewOrder}
+                onPriceChange={handlePriceChange}
+                onQuantityChange={handleQuantityChange}
+                onRatioChange={setRatio}
+                onReset={resetOrder}
+                onTabChange={setOrderTab}
+              />
             </BrokerConnectionGate>
-          )}
+          </div>
+
+          <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 px-3 pt-2">
+              {bottomTabs.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setBottomTab(tab)}
+                  className={`h-8 rounded-t-md px-3 text-xs font-extrabold transition focus-ring ${
+                    tab === bottomTab
+                      ? "border-b-2 border-[#1d4ed8] text-[#071832]"
+                      : "text-slate-500 hover:bg-[#fff8e1] hover:text-[#071832]"
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+            <div className="p-2">
+              {bottomTab === "차트" && (
+                <ChartPanel candles={data.chartCandles} period={period} onPeriodChange={setPeriod} stockName={data.stock.name} />
+              )}
+              {bottomTab === "뉴스" && <NewsPanel stock={data.stock} />}
+              {bottomTab !== "차트" && bottomTab !== "뉴스" && (
+                <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption} showNotice={false}>
+                  {bottomTab === "예수금" && <CashPanel rows={data.cashSummary} />}
+                  {bottomTab === "주문내역" && <OrderHistoryPanel rows={data.orderHistory} stock={data.stock} />}
+                  {bottomTab === "매매손익" && <ProfitLossPanel rows={data.profitLoss} stock={data.stock} />}
+                  {bottomTab === "잔고평가" && <BalancePanel rows={data.balanceEvaluation} onSellStock={handleBalanceStockSell} />}
+                </BrokerConnectionGate>
+              )}
+            </div>
+          </section>
         </div>
       </section>
     </div>
@@ -145,52 +221,199 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption }: Tradin
 
 function StockHeader({
   data,
-  favorite,
-  onFavoriteToggle,
 }: {
   data: TradingWorkspaceData;
-  favorite: boolean;
-  onFavoriteToggle: () => void;
 }) {
   const { stock } = data;
+  const exchangeLabel = getExchangeDisplayLabel(stock);
 
   return (
-    <div className="flex flex-wrap items-end justify-between gap-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-black tracking-normal text-[#071832]">{stock.name}</h1>
-          <span className="text-sm font-extrabold text-slate-500">{stock.code}</span>
-          <button
-            type="button"
-            onClick={onFavoriteToggle}
-            className={`flex h-7 w-7 items-center justify-center rounded-full transition hover:bg-[#fff8e1] focus-ring ${
-              favorite ? "text-[#f6b100]" : "text-slate-400"
-            }`}
-            aria-label={favorite ? "관심 종목 해제" : "관심 종목 지정"}
-            title={favorite ? "관심 종목 해제" : "관심 종목 지정"}
-          >
-            <Star className="h-4 w-4" fill={favorite ? "currentColor" : "none"} aria-hidden="true" />
-          </button>
+    <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 rounded-lg bg-[#f8fafc] px-3 py-2">
+        <div className="min-w-[132px] max-w-[220px] pr-1">
+          <p className="truncate text-xl font-black tracking-normal text-[#071832]">{stock.name}</p>
+          <p className="mt-1 text-xs font-extrabold text-slate-500">{exchangeLabel}</p>
         </div>
-        <div className="mt-1 flex flex-wrap items-baseline gap-2">
-          <span className={`text-3xl font-black tabular-nums ${toneTextClass(stock.tone)}`}>{stock.price}</span>
-          <span className={`text-base font-extrabold tabular-nums ${toneTextClass(stock.tone)}`}>{stock.change}</span>
-          <span className={`text-base font-extrabold tabular-nums ${toneTextClass(stock.tone)}`}>{stock.changeRate}</span>
-          <span className="rounded-full bg-[#f8fafc] px-2 py-1 text-[11px] font-bold text-slate-500">source=mock</span>
+        <StockHeaderMetric label="종목코드" value={stock.code} valueClassName="font-mono text-base text-[#071832]" />
+        <StockHeaderMetric label="가격" value={stock.price} valueClassName={`text-xl ${toneTextClass(stock.tone)}`} />
+        <StockHeaderMetric label="등락률" value={stock.changeRate} valueClassName={`text-lg ${toneTextClass(stock.tone)}`} />
+        <StockHeaderMetric label="거래량" value={stock.volume} valueClassName="text-base text-[#071832]" />
+        <StockHeaderMetric label="거래대금" value={stock.tradingValue} valueClassName="text-base text-[#071832]" />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-end gap-2 rounded-lg border border-slate-200 bg-white px-2 py-2">
+        <span className="px-1 text-xs font-extrabold text-slate-500">종목토론</span>
+        <CommunityLink href={getNaverCommunityUrl(stock.code)} label="네이버" icon="N" tone="naver" />
+        <CommunityLink href={getTossCommunityUrl(stock.code)} label="토스" icon="T" tone="toss" />
+      </div>
+    </div>
+  );
+}
+
+function StockHeaderMetric({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  valueClassName: string;
+}) {
+  return (
+    <div className="min-w-[76px] whitespace-nowrap">
+      <p className="text-[11px] font-extrabold text-slate-500">{label}</p>
+      <p className={`mt-1 font-black tabular-nums ${valueClassName}`}>{value}</p>
+    </div>
+  );
+}
+
+function CommunityLink({
+  href,
+  icon,
+  label,
+  tone,
+}: {
+  href: string;
+  icon: string;
+  label: string;
+  tone: "naver" | "toss";
+}) {
+  const iconClass =
+    tone === "naver"
+      ? "bg-[#03c75a] text-white"
+      : "bg-[#2563eb] text-white";
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-2.5 text-xs font-extrabold text-[#071832] transition hover:bg-[#fff8e1] focus-ring"
+      aria-label={`${label} 종목토론 열기`}
+      title={`${label} 종목토론 열기`}
+    >
+      <span className={`flex h-6 w-6 items-center justify-center rounded-md text-[12px] font-black ${iconClass}`} aria-hidden="true">
+        {icon}
+      </span>
+      {label}
+    </a>
+  );
+}
+
+function LeftStockPanel({
+  activeTab,
+  data,
+  watchlistItems,
+  onSelectWatchItem,
+  onTabChange,
+}: {
+  activeTab: LeftInfoTab;
+  data: TradingWorkspaceData;
+  watchlistItems: WatchItem[];
+  onSelectWatchItem: (symbol: string) => void;
+  onTabChange: (tab: LeftInfoTab) => void;
+}) {
+  return (
+    <div className="flex h-full min-h-[560px] flex-col rounded-lg border border-slate-200 bg-white">
+      <div className="border-b border-slate-200">
+        <div className="grid grid-cols-2">
+          {leftInfoTabs.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => onTabChange(tab)}
+              className={`h-9 border-l border-slate-100 text-xs font-extrabold transition first:border-l-0 focus-ring ${
+                tab === activeTab ? "border-b-2 border-[#1d4ed8] text-[#1d4ed8]" : "text-slate-500 hover:bg-[#f8fafc]"
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
       </div>
 
-      <dl className="grid grid-cols-2 gap-x-5 gap-y-1 text-xs">
-        <div>
-          <dt className="font-bold text-slate-500">거래량</dt>
-          <dd className="mt-1 font-extrabold tabular-nums text-[#071832]">{stock.volume}</dd>
-        </div>
-        <div>
-          <dt className="font-bold text-slate-500">거래대금</dt>
-          <dd className="mt-1 font-extrabold tabular-nums text-[#071832]">{stock.tradingValue}</dd>
-        </div>
-      </dl>
+      <div className="min-h-0 flex-1">
+        {activeTab === "관심종목" && (
+          <WatchlistPanel activeStockId={data.stock.id} items={watchlistItems} onSelect={onSelectWatchItem} />
+        )}
+        {activeTab === "현재가" && <CurrentPricePanel stock={data.stock} />}
+      </div>
     </div>
+  );
+}
+
+function WatchlistPanel({
+  activeStockId,
+  items,
+  onSelect,
+}: {
+  activeStockId: string;
+  items: WatchItem[];
+  onSelect: (symbol: string) => void;
+}) {
+  if (items.length === 0) {
+    return (
+      <div className="flex h-full min-h-[260px] items-center justify-center p-4 text-center text-xs font-bold text-slate-500">
+        등록된 관심종목이 없습니다.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col p-2">
+      <div className="grid flex-none grid-cols-[minmax(128px,1.35fr)_78px_64px_64px] rounded-t-md bg-[#f8fafc] px-2 py-1.5 text-[11px] font-extrabold text-slate-500">
+        <span>종목명</span>
+        <span className="text-right">현재가</span>
+        <span className="text-right">대비</span>
+        <span className="text-right">등락률</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {items.map((item) => {
+          const market = getWatchItemMarket(item);
+          const isActive = activeStockId === item.symbol;
+
+          return (
+            <button
+              key={item.symbol}
+              type="button"
+              onClick={() => onSelect(item.symbol)}
+              className={`grid w-full grid-cols-[minmax(128px,1.35fr)_78px_64px_64px] items-center gap-1 border-b border-slate-100 px-2 py-2 text-left text-xs transition focus-ring ${
+                isActive ? "bg-blue-50" : "hover:bg-[#fff8e1]"
+              }`}
+              aria-label={`${item.name} 현재 종목으로 보기`}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <WatchItemLogo item={item} />
+                <span className="min-w-0">
+                  <span className="block truncate font-black text-[#071832]">{item.name}</span>
+                  <span className="mt-0.5 block font-mono text-[10px] font-bold text-slate-500">{item.symbol}</span>
+                </span>
+              </span>
+              <span className="text-right font-black tabular-nums text-[#071832]">{market.price}</span>
+              <span className={`text-right font-extrabold tabular-nums ${toneTextClass(market.tone)}`}>{market.change}</span>
+              <span className={`text-right font-extrabold tabular-nums ${toneTextClass(market.tone)}`}>{market.changeRate}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WatchItemLogo({ item }: { item: WatchItem }) {
+  const iconUrl = getWatchItemIconUrl(item);
+
+  return (
+    <span className="relative flex h-8 w-8 flex-none items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-white text-[10px] font-black text-[#071832] shadow-sm">
+      <span aria-hidden={Boolean(iconUrl)}>{item.name.slice(0, 1)}</span>
+      {iconUrl ? (
+        <span
+          className="absolute h-6 w-6 rounded bg-white bg-contain bg-center bg-no-repeat"
+          style={{ backgroundImage: `url(${iconUrl})` }}
+          aria-label={`${item.name} 로고`}
+        />
+      ) : null}
+    </span>
   );
 }
 
@@ -199,21 +422,20 @@ function MarketInfoPanel({
   data,
   onTabChange,
 }: {
-  activeTab: InfoTab;
+  activeTab: MarketInfoTab;
   data: TradingWorkspaceData;
-  onTabChange: (tab: InfoTab) => void;
+  onTabChange: (tab: MarketInfoTab) => void;
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white">
-      <div className="grid grid-cols-[96px_1fr] border-b border-slate-200">
-        <div className="flex items-center justify-center text-xs font-extrabold text-[#1d4ed8]">현재가</div>
+      <div className="border-b border-slate-200">
         <div className="grid grid-cols-3">
-          {infoTabs.map((tab) => (
+          {marketInfoTabs.map((tab) => (
             <button
               key={tab}
               type="button"
               onClick={() => onTabChange(tab)}
-              className={`h-9 border-l border-slate-100 text-xs font-extrabold transition focus-ring ${
+              className={`h-9 border-l border-slate-100 text-xs font-extrabold transition first:border-l-0 focus-ring ${
                 tab === activeTab ? "border-b-2 border-[#1d4ed8] text-[#1d4ed8]" : "text-slate-500 hover:bg-[#f8fafc]"
               }`}
             >
@@ -226,6 +448,48 @@ function MarketInfoPanel({
       {activeTab === "호가" && <OrderBookPanel rows={data.orderBook} currentPrice={data.stock.price} />}
       {activeTab === "체결" && <ExecutionPanel rows={data.executions} />}
       {activeTab === "거래원" && <BrokerPanel rows={data.brokerTrades} />}
+    </div>
+  );
+}
+
+function CurrentPricePanel({ stock }: { stock: TradingWorkspaceData["stock"] }) {
+  const stats = [
+    ["현재가", stock.price],
+    ["전일대비", stock.change],
+    ["등락률", stock.changeRate],
+    ["거래량", stock.volume],
+    ["거래대금", stock.tradingValue],
+    ["시가", "67,200"],
+    ["고가", "67,300"],
+    ["저가", "65,900"],
+    ["전일종가", "67,230"],
+    ["52주 최고", "88,800"],
+    ["52주 최저", "62,100"],
+    ["시가총액", "395조"],
+    ["PER", "18.4배"],
+    ["PBR", "1.24배"],
+  ];
+
+  return (
+    <div className="p-3">
+      <div className="mb-3 rounded-lg bg-[#f8fafc] p-4">
+        <p className="text-xs font-bold text-slate-500">{getExchangeDisplayLabel(stock)}</p>
+        <div className="mt-1 flex flex-wrap items-baseline gap-2">
+          <span className={`text-3xl font-black tabular-nums ${toneTextClass(stock.tone)}`}>{stock.price}</span>
+          <span className={`text-sm font-extrabold tabular-nums ${toneTextClass(stock.tone)}`}>{stock.change}</span>
+          <span className={`text-sm font-extrabold tabular-nums ${toneTextClass(stock.tone)}`}>{stock.changeRate}</span>
+        </div>
+      </div>
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {stats.map(([label, value]) => (
+          <div key={label} className="rounded-lg border border-slate-100 px-3 py-2">
+            <dt className="text-[11px] font-bold text-slate-500">{label}</dt>
+            <dd className={`mt-1 text-xs font-extrabold tabular-nums ${label === "전일대비" || label === "등락률" ? toneTextClass(stock.tone) : "text-[#071832]"}`}>
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
@@ -317,14 +581,10 @@ function BrokerPanel({ rows }: { rows: BrokerTradeRow[] }) {
 function OrderFormPanel({
   activeTab,
   amount,
-  autoConfirm,
-  autoPriority,
   orderType,
   price,
   quantity,
   ratio,
-  onAutoConfirmChange,
-  onAutoPriorityChange,
   onOrderTypeChange,
   onPreview,
   onPriceChange,
@@ -335,14 +595,10 @@ function OrderFormPanel({
 }: {
   activeTab: OrderTab;
   amount: number;
-  autoConfirm: boolean;
-  autoPriority: boolean;
   orderType: string;
   price: string;
   quantity: string;
   ratio: string;
-  onAutoConfirmChange: (checked: boolean) => void;
-  onAutoPriorityChange: (checked: boolean) => void;
   onOrderTypeChange: (value: string) => void;
   onPreview: () => void;
   onPriceChange: (value: string) => void;
@@ -351,11 +607,28 @@ function OrderFormPanel({
   onReset: () => void;
   onTabChange: (tab: OrderTab) => void;
 }) {
-  const actionClass = activeTab === "매도" ? "bg-[#1d4ed8] hover:bg-[#1e40af]" : "bg-[#ef233c] hover:bg-[#d90429]";
+  const actionClass =
+    activeTab === "매도"
+      ? "bg-[#1d4ed8] hover:bg-[#1e40af]"
+      : activeTab === "정정"
+        ? "bg-emerald-600 hover:bg-emerald-700"
+        : activeTab === "취소"
+          ? "bg-violet-600 hover:bg-violet-700"
+          : "bg-[#ef233c] hover:bg-[#d90429]";
+  const activeClass =
+    activeTab === "매도"
+      ? "border-b-2 border-[#1d4ed8] text-[#1d4ed8]"
+      : activeTab === "정정"
+        ? "border-b-2 border-emerald-600 text-emerald-700"
+        : activeTab === "취소"
+          ? "border-b-2 border-violet-600 text-violet-700"
+          : "border-b-2 border-[#ef233c] text-[#ef233c]";
   const actionText = activeTab === "정정" ? "정정 요청" : activeTab === "취소" ? "취소 요청" : `${activeTab} 주문`;
+  const isModify = activeTab === "정정";
+  const isCancel = activeTab === "취소";
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white">
+    <div id="trading-order-panel" className="rounded-lg border border-slate-200 bg-white">
       <div className="grid grid-cols-4 border-b border-slate-200">
         {orderTabs.map((tab) => (
           <button
@@ -363,7 +636,7 @@ function OrderFormPanel({
             type="button"
             onClick={() => onTabChange(tab)}
             className={`h-9 border-l border-slate-100 text-xs font-extrabold first:border-l-0 transition focus-ring ${
-              tab === activeTab ? "border-b-2 border-[#ef233c] text-[#ef233c]" : "text-slate-500 hover:bg-[#f8fafc]"
+              tab === activeTab ? activeClass : "text-slate-500 hover:bg-[#f8fafc]"
             }`}
           >
             {tab}
@@ -372,34 +645,33 @@ function OrderFormPanel({
       </div>
 
       <div className="space-y-2 p-3">
-        <div className="grid grid-cols-[86px_1fr_36px] items-center gap-2">
+        <div className="grid grid-cols-[86px_1fr] items-center gap-2">
           <span className="text-xs font-extrabold text-[#071832]">계좌</span>
           <button type="button" className="flex h-8 items-center justify-between rounded-lg border border-slate-200 bg-white px-2 text-xs font-bold text-[#071832] focus-ring">
             종합위탁 257-232-648
             <ChevronDown className="h-4 w-4 text-slate-500" aria-hidden="true" />
           </button>
-          <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-[#fff8e1] focus-ring" aria-label="주문 옵션" title="주문 옵션">
-            <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-          </button>
         </div>
 
-        <div className="grid grid-cols-[86px_1fr] items-center gap-2">
-          <span className="text-xs font-extrabold text-[#071832]">주문유형</span>
-          <div className="grid grid-cols-4 gap-2">
-            {orderTypes.map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => onOrderTypeChange(type)}
-                className={`h-8 rounded-lg border text-xs font-extrabold transition focus-ring ${
-                  type === orderType ? "border-[#ef233c] bg-[#ef233c] text-white" : "border-slate-200 bg-white text-[#071832] hover:bg-[#fff8e1]"
-                }`}
-              >
-                {type}
-              </button>
-            ))}
+        {!isCancel && (
+          <div className="grid grid-cols-[86px_1fr] items-center gap-2">
+            <span className="text-xs font-extrabold text-[#071832]">{isModify ? "정정유형" : "주문유형"}</span>
+            <div className="grid grid-cols-4 gap-2">
+              {orderTypes.map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => onOrderTypeChange(type)}
+                  className={`h-8 rounded-lg border text-xs font-extrabold transition focus-ring ${
+                    type === orderType ? `${actionClass.split(" ")[0]} border-transparent text-white` : "border-slate-200 bg-white text-[#071832] hover:bg-[#fff8e1]"
+                  }`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="grid grid-cols-[86px_1fr_64px] items-center gap-2">
           <span className="text-xs font-extrabold text-[#071832]">주문가능금액</span>
@@ -410,15 +682,26 @@ function OrderFormPanel({
           </button>
         </div>
 
-        <StepperField label="가격" unit="원" value={price} onChange={onPriceChange} step={100} />
-        <StepperField label="수량" unit="주" value={quantity} onChange={onQuantityChange} step={1} />
+        {(isModify || isCancel) && (
+          <div className="grid grid-cols-[86px_1fr] items-center gap-2">
+            <span className="text-xs font-extrabold text-[#071832]">원주문번호</span>
+            <input
+              value="A20260607-093012"
+              readOnly
+              className="h-8 rounded-lg border border-slate-200 bg-[#f8fafc] px-2 text-xs font-bold text-[#071832] outline-none"
+            />
+          </div>
+        )}
+
+        {!isCancel && <StepperField label={isModify ? "정정가격" : "가격"} unit="원" value={price} onChange={onPriceChange} step={100} />}
+        <StepperField label={isCancel ? "취소수량" : isModify ? "정정수량" : "수량"} unit="주" value={quantity} onChange={onQuantityChange} step={1} />
 
         <div className="grid grid-cols-[86px_1fr] items-center gap-2">
-          <span className="text-xs font-extrabold text-[#071832]">주문금액</span>
+          <span className="text-xs font-extrabold text-[#071832]">{isCancel ? "취소예정금액" : isModify ? "정정예정금액" : "주문금액"}</span>
           <span className="text-right text-sm font-black tabular-nums text-[#071832]">{amount.toLocaleString("ko-KR")} 원</span>
         </div>
 
-        <div className="grid grid-cols-5 gap-1.5">
+        {!isCancel && <div className="grid grid-cols-5 gap-1.5">
           {ratios.map((item) => (
             <button
               key={item}
@@ -431,27 +714,12 @@ function OrderFormPanel({
               {item}
             </button>
           ))}
-        </div>
+        </div>}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-            <input
-              type="checkbox"
-              checked={autoPriority}
-              onChange={(event) => onAutoPriorityChange(event.target.checked)}
-              className="h-4 w-4 accent-[#1d4ed8]"
-            />
-            자동(최우선)
-          </label>
-          <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-            <input
-              type="checkbox"
-              checked={autoConfirm}
-              onChange={(event) => onAutoConfirmChange(event.target.checked)}
-              className="h-4 w-4 accent-[#1d4ed8]"
-            />
-            자동주문 확인
-          </label>
+          <p className="text-xs font-bold text-slate-500">
+            {isCancel ? "선택한 원주문의 미체결 수량을 취소합니다." : isModify ? "미체결 주문의 가격 또는 수량을 정정합니다." : "주문 전 예상 금액과 수량을 확인하세요."}
+          </p>
           <button type="button" onClick={onReset} className="flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-2 text-xs font-extrabold hover:bg-[#fff8e1] focus-ring">
             <RotateCcw className="h-4 w-4" aria-hidden="true" />
             초기화
@@ -521,6 +789,17 @@ function ChartPanel({
   stockName: string;
   onPeriodChange: (period: string) => void;
 }) {
+  const periodCandles = useMemo(
+    () => candles.map((candle, index) => ({
+      ...candle,
+      label: period === "일" || period === "주" || period === "월" ? candle.label : `${index + 1}`,
+      high: candle.high + periodOffset(period, index),
+      low: candle.low + periodOffset(period, index) / 2,
+      close: candle.close + periodOffset(period, index),
+    })),
+    [candles, period]
+  );
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-1.5">
@@ -543,11 +822,7 @@ function ChartPanel({
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" className="h-7 rounded-md border border-[#bfdbfe] px-2.5 text-xs font-extrabold text-[#1d4ed8] hover:bg-blue-50 focus-ring">기본차트</button>
-          <button type="button" className="h-7 rounded-md px-2.5 text-xs font-extrabold text-slate-600 hover:bg-[#fff8e1] focus-ring">트레이딩뷰</button>
-          <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md text-slate-600 hover:bg-[#fff8e1] focus-ring" aria-label="차트 확장" title="차트 확장">
-            <Maximize2 className="h-4 w-4" aria-hidden="true" />
-          </button>
+          <span className="rounded-md border border-[#bfdbfe] px-2.5 py-1.5 text-xs font-extrabold text-[#1d4ed8]">기본차트</span>
         </div>
       </div>
 
@@ -560,9 +835,14 @@ function ChartPanel({
         <span className="ml-2 text-xs text-blue-600">▼ 1,030 (-1.53%)</span>
       </div>
 
-      <CandleChart candles={candles} />
+      <CandleChart candles={periodCandles} />
     </div>
   );
+}
+
+function periodOffset(period: string, index: number) {
+  const scale = period === "1분" ? 35 : period === "5분" ? 55 : period === "15분" ? 75 : period === "30분" ? 90 : period === "주" ? 160 : period === "월" ? 220 : 120;
+  return Math.round(Math.sin(index * 0.9) * scale);
 }
 
 function CandleChart({ candles }: { candles: ChartCandle[] }) {
@@ -586,7 +866,7 @@ function CandleChart({ candles }: { candles: ChartCandle[] }) {
 
   return (
     <div className="overflow-x-auto px-2 pb-3">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-[235px] min-w-[760px] w-full" role="img" aria-label="모의 캔들 차트">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-[340px] min-w-[760px] w-full" role="img" aria-label="모의 캔들 차트">
         {[0, 1, 2, 3].map((line) => {
           const yPos = chartTop + ((chartBottom - chartTop) / 3) * line;
           return <line key={line} x1={leftPadding} x2={width - rightPadding} y1={yPos} y2={yPos} stroke="#e5e7eb" strokeWidth="1" />;
@@ -649,67 +929,225 @@ function CashPanel({ rows }: { rows: { label: string; value: string }[] }) {
   );
 }
 
-function OrderHistoryPanel({ rows }: { rows: OrderHistoryRow[] }) {
-  return <SimpleTable columns={["시간", "구분", "가격", "수량", "상태"]} rows={rows.map((row) => [row.time, row.side, row.price, row.quantity, row.status])} />;
-}
-
-function ProfitLossPanel({ rows }: { rows: ProfitLossSummary[] }) {
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {rows.map((row) => (
-        <div key={row.label} className="rounded-lg border border-slate-200 bg-[#f8fafc] p-4">
-          <p className="text-xs font-bold text-slate-500">{row.label}</p>
-          <p className={`mt-2 text-lg font-black tabular-nums ${toneTextClass(row.tone)}`}>{row.value}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function BalancePanel({ rows }: { rows: BalanceEvaluationRow[] }) {
-  return (
-    <SimpleTable
-      columns={["종목", "수량", "평균단가", "평가금액", "수익률"]}
-      rows={rows.map((row) => [row.name, row.quantity, row.avgPrice, row.evalAmount, row.profitRate])}
-      toneByLastCell={rows.map((row) => row.tone)}
-    />
-  );
-}
-
-function SimpleTable({
-  columns,
+function OrderHistoryPanel({
   rows,
-  toneByLastCell,
+  stock,
 }: {
-  columns: string[];
-  rows: string[][];
-  toneByLastCell?: PriceTone[];
+  rows: OrderHistoryRow[];
+  stock: TradingWorkspaceData["stock"];
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200">
-      <div className="grid bg-[#f8fafc] px-3 py-2 text-center text-xs font-extrabold text-slate-500" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
-        {columns.map((column) => (
-          <span key={column}>{column}</span>
-        ))}
-      </div>
-      {rows.map((row, rowIndex) => (
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <ListPanelHeader
+        columns="grid-cols-[minmax(180px,1.35fr)_78px_78px_86px_78px_86px]"
+        labels={["종목", "시간", "구분", "주문가격", "수량", "상태"]}
+      />
+      {rows.map((row) => (
         <div
-          key={row.join("-")}
-          className="grid border-t border-slate-100 px-3 py-3 text-center text-sm font-bold text-[#071832]"
-          style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
+          key={`${stock.id}-${row.time}-${row.side}-${row.status}`}
+          className="grid grid-cols-[minmax(180px,1.35fr)_78px_78px_86px_78px_86px] items-center border-t border-slate-100 px-3 py-3 text-sm"
         >
-          {row.map((cell, cellIndex) => (
-            <span
-              key={`${cell}-${cellIndex}`}
-              className={cellIndex === row.length - 1 && toneByLastCell ? toneTextClass(toneByLastCell[rowIndex]) : "tabular-nums"}
-            >
-              {cell}
-            </span>
-          ))}
+          <StockListIdentity name={stock.name} code={stock.code} iconUrl={stock.iconUrl} />
+          <span className="font-mono text-xs font-bold text-slate-500">{row.time}</span>
+          <span className={`font-extrabold ${orderSideClass(row.side)}`}>{row.side}</span>
+          <span className="text-right font-black tabular-nums text-[#071832]">{row.price}</span>
+          <span className="text-right font-bold tabular-nums text-slate-600">{row.quantity}</span>
+          <span className="justify-self-end">
+            <StatusBadge status={row.status} />
+          </span>
         </div>
       ))}
     </div>
   );
+}
+
+function ProfitLossPanel({
+  rows,
+  stock,
+}: {
+  rows: ProfitLossSummary[];
+  stock: TradingWorkspaceData["stock"];
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <ListPanelHeader
+        columns="grid-cols-[minmax(180px,1.35fr)_minmax(120px,0.9fr)_120px_minmax(160px,1fr)]"
+        labels={["종목", "손익 항목", "금액/수익률", "해석"]}
+      />
+      {rows.map((row) => (
+        <div
+          key={`${stock.id}-${row.label}`}
+          className="grid grid-cols-[minmax(180px,1.35fr)_minmax(120px,0.9fr)_120px_minmax(160px,1fr)] items-center border-t border-slate-100 px-3 py-3 text-sm"
+        >
+          <StockListIdentity name={stock.name} code={stock.code} iconUrl={stock.iconUrl} />
+          <span className="font-extrabold text-[#071832]">{row.label}</span>
+          <span className={`text-right font-black tabular-nums ${toneTextClass(row.tone)}`}>{row.value}</span>
+          <span className="text-right text-xs font-bold text-slate-500">{profitLossMemo(row)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BalancePanel({
+  rows,
+  onSellStock,
+}: {
+  rows: BalanceEvaluationRow[];
+  onSellStock: (row: BalanceEvaluationRow) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <ListPanelHeader
+        columns="grid-cols-[minmax(180px,1.35fr)_84px_96px_112px_84px_100px_92px]"
+        labels={["종목", "보유수량", "평균단가", "평가금액", "수익률", "평가상태", "주문"]}
+      />
+      {rows.map((row) => {
+        const stock = getTradingStockByName(row.name);
+        return (
+          <button
+            type="button"
+            key={`${row.name}-${row.quantity}`}
+            onClick={() => onSellStock(row)}
+            className="grid w-full grid-cols-[minmax(180px,1.35fr)_84px_96px_112px_84px_100px_92px] items-center border-t border-slate-100 px-3 py-3 text-left text-sm transition hover:bg-blue-50/60 focus-ring"
+            aria-label={`${row.name} 매도 주문 화면으로 설정`}
+            title={`${row.name} 매도 주문 화면으로 설정`}
+          >
+            <StockListIdentity name={row.name} code={stock?.code ?? "-"} iconUrl={stock?.iconUrl} />
+            <span className="text-right font-bold tabular-nums text-slate-600">{row.quantity}</span>
+            <span className="text-right font-bold tabular-nums text-slate-600">{row.avgPrice}</span>
+            <span className="text-right font-black tabular-nums text-[#071832]">{row.evalAmount}</span>
+            <span className={`text-right font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.profitRate}</span>
+            <span className="justify-self-end">
+              <StatusBadge status={row.tone === "up" ? "수익" : row.tone === "down" ? "손실" : "보합"} />
+            </span>
+            <span className="justify-self-end rounded-lg bg-[#071832] px-3 py-1.5 text-xs font-extrabold text-white">
+              매도 설정
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function NewsPanel({ stock }: { stock: TradingWorkspaceData["stock"] }) {
+  const newsItems = getStockNewsItems(stock);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-[#f8fafc] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Newspaper className="h-4 w-4 flex-none text-[#1d4ed8]" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-sm font-black text-[#071832]">{stock.name} 뉴스</p>
+            <p className="mt-0.5 text-xs font-semibold text-slate-500">뉴스 제목을 선택하면 원문/검색 결과로 이동합니다.</p>
+          </div>
+        </div>
+        <a
+          href={getStockNewsHomeUrl(stock)}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 transition hover:bg-[#fff8e1] hover:text-[#071832] focus-ring"
+        >
+          전체 뉴스
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+        </a>
+      </div>
+
+      <div className="divide-y divide-slate-100">
+        {newsItems.map((item) => (
+          <a
+            key={item.title}
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            className="grid gap-3 px-4 py-3 transition hover:bg-[#fffdf7] focus-ring md:grid-cols-[minmax(0,1fr)_120px]"
+            aria-label={`${item.title} 뉴스로 이동`}
+            title={`${item.title} 뉴스로 이동`}
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-black text-[#071832]">{item.title}</span>
+              <span className="mt-1 block line-clamp-2 text-xs font-semibold leading-5 text-slate-500">{item.summary}</span>
+            </span>
+            <span className="flex items-center justify-start gap-2 text-xs font-bold text-slate-500 md:justify-end">
+              <span>{item.source}</span>
+              <span className="h-1 w-1 rounded-full bg-slate-300" aria-hidden="true" />
+              <span>{item.time}</span>
+              <ExternalLink className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+            </span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ListPanelHeader({ columns, labels }: { columns: string; labels: string[] }) {
+  return (
+    <div className={`grid ${columns} bg-[#f8fafc] px-3 py-2 text-xs font-extrabold text-slate-500`}>
+      {labels.map((label, index) => (
+        <span key={label} className={index === 0 ? "text-left" : "text-right"}>
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function StockListIdentity({ name, code, iconUrl }: { name: string; code: string; iconUrl?: string }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="relative flex h-8 w-8 flex-none items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-[#f8fafc] text-[10px] font-black text-[#071832]">
+        <span aria-hidden={Boolean(iconUrl)}>{name.slice(0, 1)}</span>
+        {iconUrl ? (
+          <span
+            className="absolute h-6 w-6 rounded bg-[#f8fafc] bg-contain bg-center bg-no-repeat"
+            style={{ backgroundImage: `url(${iconUrl})` }}
+            aria-label={name}
+          />
+        ) : null}
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate font-black text-[#071832]">{name}</span>
+        <span className="block font-mono text-[11px] font-bold text-slate-500">{code}</span>
+      </span>
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`inline-flex h-7 items-center rounded-full px-2.5 text-xs font-extrabold ${statusBadgeClass(status)}`}>
+      {status}
+    </span>
+  );
+}
+
+function getTradingStockByName(name: string) {
+  return Object.values(tradingWorkspaceByStockId).find((workspace) => workspace.stock.name === name)?.stock;
+}
+
+function orderSideClass(side: string) {
+  if (side === "매수") return "text-red-500";
+  if (side === "매도") return "text-blue-600";
+  if (side === "정정") return "text-emerald-600";
+  if (side === "취소") return "text-violet-600";
+  return "text-slate-600";
+}
+
+function statusBadgeClass(status: string) {
+  if (status === "완료" || status === "수익") return "bg-red-50 text-red-600";
+  if (status === "대기" || status === "보합") return "bg-amber-50 text-[#8a6400]";
+  if (status === "손실") return "bg-blue-50 text-blue-600";
+  if (status === "preview") return "bg-slate-100 text-slate-600";
+  return "bg-[#f8fafc] text-slate-600";
+}
+
+function profitLossMemo(row: ProfitLossSummary) {
+  if (row.tone === "up") return `${row.label}은 우호적입니다.`;
+  if (row.tone === "down") return `${row.label}은 점검이 필요합니다.`;
+  return `${row.label}은 중립입니다.`;
 }
 
 function linePath(values: Array<number | null>, x: (index: number) => number, y: (price: number) => number) {
@@ -733,6 +1171,105 @@ function movingAverage(values: number[], period: number): Array<number | null> {
 function toNumber(value: string) {
   const parsed = Number(value.replace(/[^\d]/g, ""));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeOrderQuantity(quantity?: string | null) {
+  if (!quantity) return "0";
+  return getOrderQuantityFromBalance(quantity);
+}
+
+function getOrderQuantityFromBalance(quantity: string) {
+  const parsed = Number(quantity.replace(/[^\d]/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed.toLocaleString("ko-KR") : "0";
+}
+
+function getWatchItemMarket(item: WatchItem): { price: string; change: string; changeRate: string; tone: PriceTone } {
+  const workspace = tradingWorkspaceByStockId[item.symbol];
+  if (workspace) {
+    return {
+      price: workspace.stock.price,
+      change: workspace.stock.change,
+      changeRate: workspace.stock.changeRate,
+      tone: workspace.stock.tone,
+    };
+  }
+
+  return {
+    price: item.price,
+    change: "-",
+    changeRate: item.changeRate,
+    tone: toneFromChangeRate(item.changeRate),
+  };
+}
+
+function getWatchItemIconUrl(item: WatchItem) {
+  return tradingWorkspaceByStockId[item.symbol]?.stock.iconUrl;
+}
+
+function getExchangeDisplayLabel(stock: TradingWorkspaceData["stock"]) {
+  if (stock.exchange === "KRX" && dualExchangeStockIds.has(stock.id)) {
+    return "KRX/NXT";
+  }
+
+  return stock.exchange;
+}
+
+function getNaverCommunityUrl(code: string) {
+  return `https://finance.naver.com/item/board.naver?code=${encodeURIComponent(code)}`;
+}
+
+function getTossCommunityUrl(code: string) {
+  return `https://tossinvest.com/stocks/${encodeURIComponent(code)}/community`;
+}
+
+function getStockNewsItems(stock: TradingWorkspaceData["stock"]) {
+  const source = stock.exchange === "NASDAQ" ? "Yahoo Finance" : "네이버뉴스";
+  const templates = [
+    {
+      title: `${stock.name}, 거래대금 확대 속 주가 흐름 주목`,
+      summary: `${stock.name}의 최근 가격 변동과 거래량 흐름을 함께 점검한 기사입니다.`,
+      time: "09:42",
+    },
+    {
+      title: `${stock.name} 실적 전망과 업종 모멘텀 점검`,
+      summary: `실적 추정치, 업종 수급, 주요 이벤트가 현재 주가에 미치는 영향을 정리합니다.`,
+      time: "10:18",
+    },
+    {
+      title: `${stock.name}, 기관·외국인 수급 변화 체크`,
+      summary: `단기 매매 관점에서 확인할 만한 수급 변화와 리스크 요인을 살펴봅니다.`,
+      time: "11:05",
+    },
+  ];
+
+  return templates.map((item) => ({
+    ...item,
+    source,
+    url: getStockNewsSearchUrl(stock, item.title),
+  }));
+}
+
+function getStockNewsHomeUrl(stock: TradingWorkspaceData["stock"]) {
+  if (stock.exchange === "NASDAQ") {
+    return `https://finance.yahoo.com/quote/${encodeURIComponent(stock.code)}/news`;
+  }
+
+  return `https://finance.naver.com/item/news.naver?code=${encodeURIComponent(stock.code)}`;
+}
+
+function getStockNewsSearchUrl(stock: TradingWorkspaceData["stock"], title: string) {
+  if (stock.exchange === "NASDAQ") {
+    return `https://finance.yahoo.com/quote/${encodeURIComponent(stock.code)}/news`;
+  }
+
+  return `https://search.naver.com/search.naver?where=news&query=${encodeURIComponent(title)}`;
+}
+
+function toneFromChangeRate(value: string): PriceTone {
+  const trimmedValue = value.trim();
+  if (trimmedValue.startsWith("+")) return "up";
+  if (trimmedValue.startsWith("-")) return "down";
+  return "neutral";
 }
 
 function toneTextClass(tone: PriceTone) {

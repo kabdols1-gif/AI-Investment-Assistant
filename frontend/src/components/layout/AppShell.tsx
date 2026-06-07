@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { FormEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { createContext, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useContext, useEffect, useState } from "react";
 import {
   Bell,
   Check,
@@ -30,7 +30,6 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { AIResponseCard, type AssistantResult } from "@/components/assistant/AIResponseCard";
 import { RiskNotice } from "@/components/safety/RiskNotice";
 import { BrokerConnectionNotice } from "@/components/settings/BrokerConnectionGate";
 import { RecentViewedStocksBar } from "@/components/symbols";
@@ -42,7 +41,7 @@ import { getConfigStatus, saveKBConfig, saveLLMConfig } from "@/lib/api/config";
 import { BROKER_PROVIDER_OPTIONS, getBrokerProviderOption } from "@/lib/brokerProviders";
 import { isBrokerConnected } from "@/lib/configStatus";
 import { coerceLLMProvider, DEFAULT_LLM_PROVIDER, getDefaultLLMModel, getLLMProviderOption, LLM_PROVIDER_OPTIONS } from "@/lib/llmProviders";
-import { marketOverview, navScreens, recentViewedStocks, screenMeta, type MarketTone, type ScreenKey } from "@/lib/mockData";
+import { marketOverview, navScreens, recentViewedStocks, screenMeta, tradingWorkspaceByStockId, type MarketTone, type ScreenKey } from "@/lib/mockData";
 import type { BrokerProvider, ConfigStatus, LLMProvider } from "@/types/config";
 import type { RecentViewedStockItem } from "@/types/symbols";
 import type { LLMIntent } from "@/types/voice";
@@ -50,6 +49,7 @@ import type { LLMIntent } from "@/types/voice";
 const iconMap = {
   home: Home,
   "my-strategy": ShieldCheck,
+  market: Flame,
   watchlist: Heart,
   portfolio: PieChart,
   notifications: Bell,
@@ -62,6 +62,7 @@ const NAV_MAX_WIDTH = 360;
 const CHAT_MIN_WIDTH = 280;
 const CHAT_MAX_WIDTH = 560;
 const THEME_STORAGE_KEY = "ai-investment-assistant.theme";
+const RECENT_STOCKS_STORAGE_KEY = "ai-investment-assistant.recent-stocks.v1";
 
 interface AppShellProps {
   screen: ScreenKey;
@@ -78,7 +79,23 @@ type LLMChatMessage = {
   text: string;
 };
 
+type StockWorkspaceOrderSide = "buy" | "sell";
+
 type ThemeMode = "light" | "dark";
+
+const persistentScreenByPathname: Partial<Record<string, ScreenKey>> = {
+  "/home": "home",
+  "/my-settings": "my-settings",
+  "/my-strategy": "my-strategy",
+  "/market": "market",
+  "/portfolio": "portfolio",
+  "/settings": "settings",
+  "/strategy": "strategy",
+  "/notifications": "notifications",
+  "/watchlist": "watchlist",
+};
+
+const AppShellPersistenceContext = createContext(false);
 
 function getInitialTheme(): ThemeMode {
   if (typeof window === "undefined") return "light";
@@ -89,12 +106,103 @@ function getInitialTheme(): ThemeMode {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function getInitialRecentItems(): RecentViewedStockItem[] {
+  if (typeof window === "undefined") return recentViewedStocks;
+
+  try {
+    const storedValue = window.localStorage.getItem(RECENT_STOCKS_STORAGE_KEY);
+    if (!storedValue) return recentViewedStocks;
+    const parsedValue = JSON.parse(storedValue);
+    if (!Array.isArray(parsedValue)) return recentViewedStocks;
+    const storedItems = parsedValue.filter(isRecentViewedStockItem);
+    if (storedItems.length === 0) return recentViewedStocks;
+    return mergeRecentItems(storedItems, recentViewedStocks);
+  } catch {
+    return recentViewedStocks;
+  }
+}
+
+function persistRecentItems(items: RecentViewedStockItem[]) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(RECENT_STOCKS_STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    // Keep the in-memory recent list usable if localStorage is unavailable.
+  }
+}
+
+function mergeRecentItems(primaryItems: RecentViewedStockItem[], fallbackItems: RecentViewedStockItem[]) {
+  const seenIds = new Set<string>();
+  return [...primaryItems, ...fallbackItems].filter((item) => {
+    if (seenIds.has(item.id)) return false;
+    seenIds.add(item.id);
+    return true;
+  });
+}
+
+function isRecentViewedStockItem(value: unknown): value is RecentViewedStockItem {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<RecentViewedStockItem>;
+  return (
+    typeof item.id === "string" &&
+    typeof item.code === "string" &&
+    typeof item.name === "string" &&
+    typeof item.price === "string" &&
+    typeof item.changeRate === "string" &&
+    (item.changeDirection === "up" || item.changeDirection === "down" || item.changeDirection === "neutral") &&
+    typeof item.volume === "string" &&
+    typeof item.tradingValue === "string" &&
+    (typeof item.iconUrl === "undefined" || typeof item.iconUrl === "string")
+  );
+}
+
+function getSelectedStockMeta(id?: string | null) {
+  if (!id) return undefined;
+  const tradingData = tradingWorkspaceByStockId[id];
+  if (!tradingData) return undefined;
+
+  return {
+    name: tradingData.stock.name,
+    code: tradingData.stock.code,
+  };
+}
+
 export function AppShell({ screen, children, selectedStock }: AppShellProps) {
+  const isPersistentShellMounted = useContext(AppShellPersistenceContext);
+  if (isPersistentShellMounted) {
+    return <>{children}</>;
+  }
+
+  return <AppShellFrame screen={screen} selectedStock={selectedStock}>{children}</AppShellFrame>;
+}
+
+export function PersistentAppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const screen = persistentScreenByPathname[pathname];
+
+  if (!screen) {
+    return <>{children}</>;
+  }
+
+  const stockId = screen === "home" ? searchParams.get("stock") : null;
+  const selectedStock = getSelectedStockMeta(stockId);
+
+  return (
+    <AppShellPersistenceContext.Provider value>
+      <AppShellFrame screen={screen} selectedStock={selectedStock}>
+        {children}
+      </AppShellFrame>
+    </AppShellPersistenceContext.Provider>
+  );
+}
+
+function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const toast = useToast();
   const meta = screenMeta[screen];
-  const [assistantResult, setAssistantResult] = useState<AssistantResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
   const [isLlmPanelOpen, setIsLlmPanelOpen] = useState(true);
@@ -109,9 +217,23 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
   const [isBrokerMenuOpen, setIsBrokerMenuOpen] = useState(false);
   const [isLlmMenuOpen, setIsLlmMenuOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
-  const [recentItems, setRecentItems] = useState<RecentViewedStockItem[]>(recentViewedStocks);
+  const [recentItems, setRecentItems] = useState<RecentViewedStockItem[]>(getInitialRecentItems);
   const [activeRecentStockId, setActiveRecentStockId] = useState<string | null>(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   const isLlmUnlocked = Boolean(configStatus?.llm_key_registered);
+  const activeWorkspaceStock = selectedStock ?? (pathname === "/home" ? getSelectedStockMeta(activeRecentStockId) : undefined);
+  const selectedStockCode = activeWorkspaceStock?.code ?? null;
+
+  useEffect(() => {
+    if (selectedStockCode) {
+      setIsNavCollapsed(true);
+      setIsLlmPanelOpen(false);
+      return;
+    }
+
+    setIsNavCollapsed(false);
+    setIsLlmPanelOpen(true);
+  }, [selectedStockCode]);
 
   const runAssistant = useCallback(
     async (
@@ -120,7 +242,7 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
       source: "voice" | "text" = "text"
     ): Promise<LLMIntent | void> => {
       if (!isLlmUnlocked) {
-        toast.info("LLM API Key를 먼저 연결해 주세요.");
+        toast.info("AI API Key를 먼저 연결해 주세요.");
         router.push("/settings");
         return;
       }
@@ -136,7 +258,6 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
           mode: "simulation",
           screen: activeScreen,
         });
-        setAssistantResult({ text, screen: activeScreen, intent });
         setChatMessages((messages) => [
           ...messages,
           { id: createChatMessageId("assistant"), role: "assistant", text: intent.assistant_message || intent.raw_summary },
@@ -207,30 +328,74 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
         setSharedConfigStatus(response.config);
         toast.success(`${nextProvider.name} 선택을 저장했습니다.`);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "LLM 선택 저장에 실패했습니다.";
+        const message = error instanceof Error ? error.message : "AI 선택 저장에 실패했습니다.";
         toast.error(message);
       }
     },
     [toast]
   );
 
-  const handleRecentStockSelect = useCallback(
-    (id: string) => {
-      const nextUrl = `/home?stock=${encodeURIComponent(id)}`;
+  const createRecentItemFromStock = useCallback((id: string): RecentViewedStockItem | null => {
+    const tradingData = tradingWorkspaceByStockId[id];
+    if (!tradingData) {
+      return recentViewedStocks.find((item) => item.id === id) ?? null;
+    }
+
+    const { stock } = tradingData;
+    return {
+      id: stock.id,
+      code: stock.code,
+      name: stock.name,
+      price: stock.price,
+      changeRate: stock.changeRate,
+      changeDirection: stock.tone,
+      volume: stock.volume,
+      tradingValue: stock.tradingValue,
+      iconUrl: stock.iconUrl,
+    };
+  }, []);
+
+  const openStockWorkspace = useCallback(
+    (id: string, options?: { addToRecent?: boolean; orderSide?: StockWorkspaceOrderSide; quantity?: string }) => {
+      const params = new URLSearchParams({ stock: id });
+      if (options?.orderSide) params.set("order", options.orderSide);
+      if (options?.quantity) params.set("quantity", options.quantity);
+      const nextUrl = `/home?${params.toString()}`;
+      if (options?.addToRecent) {
+        const recentItem = createRecentItemFromStock(id);
+        if (recentItem) {
+          setRecentItems((currentItems) => {
+            const nextItems = [recentItem, ...currentItems.filter((item) => item.id !== id)];
+            persistRecentItems(nextItems);
+            return nextItems;
+          });
+        }
+      }
       setActiveRecentStockId(id);
       if (pathname === "/home") {
         window.history.pushState(null, "", nextUrl);
-        window.dispatchEvent(new CustomEvent("recent-stock-selected", { detail: { id } }));
+        window.dispatchEvent(new CustomEvent("recent-stock-selected", { detail: { id, orderSide: options?.orderSide, quantity: options?.quantity } }));
         return;
       }
       router.push(nextUrl);
     },
-    [pathname, router]
+    [createRecentItemFromStock, pathname, router]
+  );
+
+  const handleRecentStockSelect = useCallback(
+    (id: string) => {
+      openStockWorkspace(id);
+    },
+    [openStockWorkspace]
   );
 
   const handleRecentStockRemove = useCallback(
     (id: string) => {
-      setRecentItems((currentItems) => currentItems.filter((item) => item.id !== id));
+      setRecentItems((currentItems) => {
+        const nextItems = currentItems.filter((item) => item.id !== id);
+        persistRecentItems(nextItems);
+        return nextItems;
+      });
       if (activeRecentStockId === id) {
         setActiveRecentStockId(null);
         if (pathname === "/home") {
@@ -284,6 +449,11 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
   );
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setIsBootstrapping(false), 360);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     const root = document.documentElement;
     root.dataset.theme = theme;
     root.classList.toggle("dark", theme === "dark");
@@ -322,6 +492,23 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
   }, []);
 
   useEffect(() => {
+    const handleStockWorkspaceRequested = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string | null; orderSide?: StockWorkspaceOrderSide; quantity?: string }>).detail;
+      if (!detail?.id) return;
+      openStockWorkspace(detail.id, { addToRecent: true, orderSide: detail.orderSide, quantity: detail.quantity });
+    };
+
+    window.addEventListener("holding-stock-selected", handleStockWorkspaceRequested);
+    window.addEventListener("watchlist-stock-selected", handleStockWorkspaceRequested);
+    window.addEventListener("portfolio-stock-selected", handleStockWorkspaceRequested);
+    return () => {
+      window.removeEventListener("holding-stock-selected", handleStockWorkspaceRequested);
+      window.removeEventListener("watchlist-stock-selected", handleStockWorkspaceRequested);
+      window.removeEventListener("portfolio-stock-selected", handleStockWorkspaceRequested);
+    };
+  }, [openStockWorkspace]);
+
+  useEffect(() => {
     const syncActiveRecentStock = () => {
       if (pathname !== "/home") {
         setActiveRecentStockId(null);
@@ -354,6 +541,10 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
   const hasRecentBar = recentItems.length > 0;
   const brokerConnected = configStatus ? isBrokerConnected(configStatus) : true;
 
+  if (isBootstrapping) {
+    return <AppBootSkeleton />;
+  }
+
   return (
     <div className="min-h-screen bg-white text-[#071832]">
       <header className="sticky top-0 z-50 border-b border-[#efd488] bg-white/95 backdrop-blur">
@@ -368,7 +559,7 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
             </div>
           </Link>
 
-          <RealtimePopularPill />
+          <RealtimePopularPill onSelectStock={(id) => openStockWorkspace(id, { addToRecent: true })} />
 
           <MarketTicker />
 
@@ -575,12 +766,6 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
             </section>
           )}
 
-          {screen !== "home" && (
-            <div className="mb-5">
-              <AIResponseCard result={assistantResult} />
-            </div>
-          )}
-
           {children}
 
           <div className="mt-6">
@@ -596,7 +781,7 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
             width={chatWidth}
             selectedProvider={selectedLlmProvider}
             selectedProviderOption={selectedLlmOption}
-            selectedStock={selectedStock}
+            selectedStock={activeWorkspaceStock}
             isProviderMenuOpen={isLlmMenuOpen}
             onAskSuggestion={handleSuggestedQuestion}
             onClose={() => setIsLlmPanelOpen(false)}
@@ -615,9 +800,9 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
               type="button"
               onClick={() => setIsLlmPanelOpen(true)}
               className="absolute right-3 top-5 z-[70] flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-[#071832] shadow-md transition hover:bg-[#fff8e1] focus-ring"
-              aria-label="LLM 문의 패널 펼치기"
+              aria-label="AI 문의 패널 펼치기"
               aria-expanded={false}
-              title="LLM 문의 패널 펼치기"
+              title="AI 문의 패널 펼치기"
             >
               <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -643,6 +828,61 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
 
 function createChatMessageId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function AppBootSkeleton() {
+  return (
+    <div className="min-h-screen bg-white text-[#071832]">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
+          <div className="h-10 w-10 animate-pulse rounded-lg bg-slate-100" />
+          <div className="hidden space-y-2 sm:block">
+            <div className="h-4 w-28 animate-pulse rounded bg-slate-100" />
+            <div className="h-3 w-36 animate-pulse rounded bg-slate-100" />
+          </div>
+          <div className="ml-3 h-9 w-28 animate-pulse rounded-lg bg-slate-100" />
+          <div className="h-9 flex-1 animate-pulse rounded-lg bg-slate-100" />
+          <div className="flex gap-2">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="h-10 w-10 animate-pulse rounded-lg bg-slate-100" />
+            ))}
+          </div>
+        </div>
+      </header>
+      <div className="flex">
+        <aside className="hidden h-[calc(100vh-4rem)] w-64 border-r border-slate-200 bg-white p-4 lg:block">
+          <div className="h-10 animate-pulse rounded-lg bg-slate-100" />
+          <div className="mt-6 space-y-3">
+            {[0, 1, 2, 3, 4, 5].map((item) => (
+              <div key={item} className="h-11 animate-pulse rounded-lg bg-slate-100" />
+            ))}
+          </div>
+        </aside>
+        <main className="min-w-0 flex-1 p-4">
+          <div className="mb-4 flex gap-2 overflow-hidden">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="h-14 min-w-56 animate-pulse rounded-lg bg-slate-100" />
+            ))}
+          </div>
+          <div className="h-20 animate-pulse rounded-lg bg-slate-100" />
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="h-32 animate-pulse rounded-lg bg-slate-100" />
+            ))}
+          </div>
+          <div className="mt-5 h-72 animate-pulse rounded-lg bg-slate-100" />
+        </main>
+        <aside className="hidden h-[calc(100vh-4rem)] w-80 border-l border-slate-200 bg-white p-4 xl:block">
+          <div className="h-12 animate-pulse rounded-lg bg-slate-100" />
+          <div className="mt-6 space-y-3">
+            {[0, 1, 2, 3].map((item) => (
+              <div key={item} className="h-14 animate-pulse rounded-lg bg-slate-100" />
+            ))}
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -681,14 +921,154 @@ function ProviderLogo({
   );
 }
 
-function RealtimePopularPill() {
+type PopularRankingItem = {
+  id: string;
+  rank: number;
+  name: string;
+  code: string;
+  price: string;
+  changeRate: string;
+  tone: MarketTone;
+};
+
+const domesticPopularRankings: PopularRankingItem[] = [
+  { id: "009150", rank: 1, name: "삼성전기", code: "009150", price: "151,800", changeRate: "+5.84%", tone: "up" },
+  { id: "000660", rank: 2, name: "SK하이닉스", code: "000660", price: "193,500", changeRate: "+2.61%", tone: "up" },
+  { id: "005930", rank: 3, name: "삼성전자", code: "005930", price: "66,200", changeRate: "-1.53%", tone: "down" },
+  { id: "373220", rank: 4, name: "LG에너지솔루션", code: "373220", price: "362,500", changeRate: "+0.33%", tone: "up" },
+  { id: "035420", rank: 5, name: "NAVER", code: "035420", price: "204,000", changeRate: "-0.48%", tone: "down" },
+  { id: "005380", rank: 6, name: "현대차", code: "005380", price: "229,000", changeRate: "+1.11%", tone: "up" },
+  { id: "035720", rank: 7, name: "카카오", code: "035720", price: "49,500", changeRate: "-0.92%", tone: "down" },
+  { id: "066570", rank: 8, name: "LG전자", code: "066570", price: "98,400", changeRate: "+1.13%", tone: "up" },
+  { id: "068270", rank: 9, name: "셀트리온", code: "068270", price: "183,900", changeRate: "+0.74%", tone: "up" },
+  { id: "005490", rank: 10, name: "POSCO홀딩스", code: "005490", price: "402,000", changeRate: "-0.62%", tone: "down" },
+];
+
+const overseasPopularRankings: PopularRankingItem[] = [
+  { id: "NVDA", rank: 1, name: "NVIDIA", code: "NVDA", price: "$125.20", changeRate: "+3.42%", tone: "up" },
+  { id: "AAPL", rank: 2, name: "Apple", code: "AAPL", price: "$212.34", changeRate: "+0.88%", tone: "up" },
+  { id: "MSFT", rank: 3, name: "Microsoft", code: "MSFT", price: "$468.90", changeRate: "-0.24%", tone: "down" },
+  { id: "TSLA", rank: 4, name: "Tesla", code: "TSLA", price: "$178.50", changeRate: "-1.12%", tone: "down" },
+  { id: "AMZN", rank: 5, name: "Amazon", code: "AMZN", price: "$184.44", changeRate: "+1.05%", tone: "up" },
+  { id: "GOOGL", rank: 6, name: "Alphabet", code: "GOOGL", price: "$176.10", changeRate: "+0.41%", tone: "up" },
+  { id: "META", rank: 7, name: "Meta", code: "META", price: "$501.20", changeRate: "-0.36%", tone: "down" },
+  { id: "AVGO", rank: 8, name: "Broadcom", code: "AVGO", price: "$1,412.00", changeRate: "+2.16%", tone: "up" },
+  { id: "AMD", rank: 9, name: "AMD", code: "AMD", price: "$164.72", changeRate: "+1.64%", tone: "up" },
+  { id: "NFLX", rank: 10, name: "Netflix", code: "NFLX", price: "$662.10", changeRate: "-0.77%", tone: "down" },
+];
+
+function RealtimePopularPill({ onSelectStock }: { onSelectStock: (id: string) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
-    <div className="hidden h-10 flex-none items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 shadow-sm xl:flex">
+    <div
+      className="group relative hidden h-10 flex-none items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 shadow-sm outline-none xl:flex"
+      tabIndex={0}
+      role="button"
+      aria-expanded={isOpen}
+      aria-label="실시간 인기 국내 해외 순위"
+      onMouseEnter={() => setIsOpen(true)}
+      onMouseLeave={() => setIsOpen(false)}
+      onClick={() => setIsOpen(true)}
+      onFocus={() => setIsOpen(true)}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") setIsOpen(false);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setIsOpen(false);
+        }
+      }}
+    >
       <Flame className="h-4 w-4 text-red-500" aria-hidden="true" />
       <span className="text-xs font-black text-[#071832]">실시간인기</span>
-      <span className="rounded-md border border-slate-200 bg-[#f8fafc] px-2 py-1 text-xs font-extrabold text-slate-600">국내</span>
-      <span className="text-xs font-black text-[#071832]">8. 삼성전기</span>
+      <PopularTickerSection label="국내" item={domesticPopularRankings[0]} />
+      <span className="h-4 w-px bg-slate-200" aria-hidden="true" />
+      <PopularTickerSection label="해외" item={overseasPopularRankings[0]} />
+
+      <div className={`absolute left-0 top-full z-[90] pt-2 group-hover:block group-focus-within:block ${isOpen ? "block" : "hidden"}`}>
+        <div className="w-[560px] rounded-lg border border-slate-200 bg-white p-3 shadow-2xl">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-sm font-black text-[#071832]">실시간 인기 종목 TOP 10</p>
+            <span className="text-[11px] font-bold text-slate-500">샘플 지연 데이터</span>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <PopularRankingPanel title="국내" items={domesticPopularRankings} onSelectStock={onSelectStock} />
+            <PopularRankingPanel title="해외" items={overseasPopularRankings} onSelectStock={onSelectStock} />
+          </div>
+        </div>
+      </div>
     </div>
+  );
+}
+
+function PopularTickerSection({ label, item }: { label: string; item: PopularRankingItem }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="rounded-md border border-slate-200 bg-[#f8fafc] px-2 py-1 text-[11px] font-extrabold text-slate-600">{label}</span>
+      <PopularStockLogo item={item} />
+      <span className="max-w-[104px] truncate text-xs font-black text-[#071832]">
+        {item.rank}. {item.name}
+      </span>
+      <span className={`text-[11px] font-black tabular-nums ${marketToneClass(item.tone)}`}>{item.changeRate}</span>
+    </span>
+  );
+}
+
+function PopularRankingPanel({
+  title,
+  items,
+  onSelectStock,
+}: {
+  title: string;
+  items: PopularRankingItem[];
+  onSelectStock: (id: string) => void;
+}) {
+  return (
+    <section className="rounded-lg border border-slate-100 bg-[#f8fafc] p-2">
+      <h3 className="px-1 pb-2 text-xs font-black text-[#071832]">{title}</h3>
+      <ol className="space-y-1">
+        {items.map((item) => (
+          <li key={`${title}-${item.code}`}>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectStock(item.id);
+              }}
+              className="grid w-full grid-cols-[24px_28px_minmax(0,1fr)_72px] items-center gap-2 rounded-md bg-white px-2 py-1.5 text-left text-xs transition hover:bg-[#fff8e1] focus-ring"
+              aria-label={`${item.name} 주문 화면 열기`}
+              title={`${item.name} 주문 화면 열기`}
+            >
+              <span className="text-center font-black tabular-nums text-slate-500">{item.rank}</span>
+              <PopularStockLogo item={item} />
+              <span className="min-w-0">
+                <span className="block truncate font-extrabold text-[#071832]">{item.name}</span>
+                <span className="block truncate font-mono text-[10px] font-bold text-slate-500">{item.code} · {item.price}</span>
+              </span>
+              <span className={`text-right font-black tabular-nums ${marketToneClass(item.tone)}`}>{item.changeRate}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function PopularStockLogo({ item }: { item: PopularRankingItem }) {
+  const iconUrl = tradingWorkspaceByStockId[item.id]?.stock.iconUrl;
+
+  return (
+    <span className="relative flex h-6 w-6 flex-none items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-white text-[10px] font-black text-[#071832]">
+      <span aria-hidden={Boolean(iconUrl)}>{item.name.slice(0, 1)}</span>
+      {iconUrl ? (
+        <span
+          className="absolute h-5 w-5 rounded-sm bg-white bg-contain bg-center bg-no-repeat"
+          style={{ backgroundImage: `url(${iconUrl})` }}
+          aria-label={item.name}
+        />
+      ) : null}
+    </span>
   );
 }
 
@@ -754,15 +1134,15 @@ function LLMChatPanel({
         type="button"
         onClick={onClose}
         className="absolute -left-4 top-5 z-[70] flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-[#071832] shadow-md transition hover:bg-[#fff8e1] focus-ring"
-        aria-label="LLM 문의 패널 접기"
+        aria-label="AI 문의 패널 접기"
         aria-expanded
-        title="LLM 문의 패널 접기"
+        title="AI 문의 패널 접기"
       >
         <PanelRightClose className="h-4 w-4" aria-hidden="true" />
       </button>
       <div
         role="separator"
-        aria-label="LLM 문의 영역 크기 조절"
+        aria-label="AI 문의 영역 크기 조절"
         aria-orientation="vertical"
         onPointerDown={onResizeStart}
         className="absolute left-0 top-0 flex h-full w-2 cursor-col-resize touch-none items-center justify-center text-slate-300 transition hover:bg-[#fff8e1] hover:text-[#8a6400]"
@@ -774,7 +1154,7 @@ function LLMChatPanel({
           <MessageCircle className="h-4 w-4" aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-none">
-          <h2 className="text-sm font-extrabold text-[#071832]">LLM 문의</h2>
+          <h2 className="text-sm font-extrabold text-[#071832]">AI 문의</h2>
         </div>
         <div className="relative min-w-0 flex-1">
           <button
@@ -783,8 +1163,8 @@ function LLMChatPanel({
             className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-[#f8fafc] px-2 text-left outline-none transition hover:border-[#f3d58a] focus:border-[#f6b100] focus:ring-2 focus:ring-[#f6b100]/20"
             aria-haspopup="listbox"
             aria-expanded={isProviderMenuOpen}
-            aria-label={`LLM 선택: ${selectedProviderOption.name}`}
-            title={`LLM 선택: ${selectedProviderOption.name}`}
+            aria-label={`AI 선택: ${selectedProviderOption.name}`}
+            title={`AI 선택: ${selectedProviderOption.name}`}
           >
             <span className="flex min-w-0 items-center gap-2">
               <ProviderLogo
@@ -832,9 +1212,9 @@ function LLMChatPanel({
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#071832] text-[#f6b100] shadow-sm">
                 <Settings className="h-5 w-5" aria-hidden="true" />
               </div>
-              <p className="mt-4 text-sm font-extrabold text-[#071832]">LLM API Key를 연결하면 대화가 활성화됩니다.</p>
+              <p className="mt-4 text-sm font-extrabold text-[#071832]">AI API Key를 연결하면 대화가 활성화됩니다.</p>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                설정 화면에서 API Key를 입력하면 종목 질문, 추천 질문, 음성 입력을 바로 사용할 수 있습니다.
+                환경설정 화면에서 API Key를 입력하면 종목 질문, 추천 질문, 음성 입력을 바로 사용할 수 있습니다.
               </p>
               <button
                 type="button"
@@ -842,7 +1222,7 @@ function LLMChatPanel({
                 className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#f6b100] px-4 text-sm font-extrabold text-[#071832] transition hover:bg-[#e0a000] focus-ring"
               >
                 <Settings className="h-4 w-4" aria-hidden="true" />
-                설정으로 이동
+                환경설정으로 이동
               </button>
             </div>
           </div>
@@ -907,7 +1287,7 @@ function LLMChatPanel({
             value={inputValue}
             onChange={(event) => onInputChange(event.target.value)}
             className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-[#f6b100] focus:ring-2 focus:ring-[#f6b100]/20 disabled:cursor-not-allowed disabled:bg-slate-100"
-            placeholder="LLM에게 문의하기"
+            placeholder="AI에게 문의하기"
             disabled={isLoading || !isUnlocked}
           />
           <button
@@ -931,85 +1311,32 @@ function LLMChatPanel({
 }
 
 function MarketTicker() {
-  const [activeId, setActiveId] = useState(marketOverview[0]?.id ?? "");
-  const [isBoardOpen, setIsBoardOpen] = useState(false);
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearCloseTimer = useCallback(() => {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  }, []);
-
-  const openBoard = useCallback(() => {
-    clearCloseTimer();
-    setIsBoardOpen(true);
-  }, [clearCloseTimer]);
-
-  const closeBoard = useCallback(() => {
-    clearCloseTimer();
-    setIsBoardOpen(false);
-  }, [clearCloseTimer]);
-
-  const scheduleCloseBoard = useCallback(() => {
-    clearCloseTimer();
-    closeTimerRef.current = setTimeout(() => {
-      setIsBoardOpen(false);
-      closeTimerRef.current = null;
-    }, 320);
-  }, [clearCloseTimer]);
-
-  const handleItemHover = useCallback(
-    (id: string) => {
-      setActiveId(id);
-      openBoard();
-    },
-    [openBoard]
-  );
-
-  useEffect(() => {
-    return () => clearCloseTimer();
-  }, [clearCloseTimer]);
+  const disabledMarketBoard = null;
+  void MarketBoard;
 
   return (
-    <div
-      className={`market-ticker-shell relative min-w-0 flex-1 ${isBoardOpen ? "market-board-open" : ""}`}
-      aria-label="시장 현황"
-      onMouseEnter={openBoard}
-      onMouseLeave={scheduleCloseBoard}
-      onFocus={openBoard}
-      onBlur={scheduleCloseBoard}
-    >
+    <div className="market-ticker-shell relative min-w-0 flex-1" aria-label="시장 현황">
       <div className="market-ticker min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-[#f8fafc] px-3 py-2">
         <div className="market-ticker-track flex w-max items-center">
-          <MarketTickerGroup onItemHover={handleItemHover} />
-          <MarketTickerGroup ariaHidden onItemHover={handleItemHover} />
-          <MarketTickerGroup ariaHidden onItemHover={handleItemHover} />
+          <MarketTickerGroup />
+          <MarketTickerGroup ariaHidden />
+          <MarketTickerGroup ariaHidden />
         </div>
       </div>
-      <MarketBoard
-        activeId={activeId}
-        onActiveChange={setActiveId}
-        onPanelEnter={openBoard}
-        onPanelLeave={scheduleCloseBoard}
-        onClose={closeBoard}
-      />
+      {disabledMarketBoard}
     </div>
   );
 }
 
 function MarketTickerGroup({
   ariaHidden = false,
-  onItemHover,
 }: {
   ariaHidden?: boolean;
-  onItemHover: (id: string) => void;
 }) {
   return (
     <div className="market-ticker-group flex flex-none items-center gap-5 pr-5" aria-hidden={ariaHidden}>
       {marketOverview.map((item) => (
-        <MarketTickerItem key={item.id} item={item} onHover={onItemHover} />
+        <MarketTickerItem key={item.id} item={item} />
       ))}
     </div>
   );
@@ -1017,16 +1344,11 @@ function MarketTickerGroup({
 
 function MarketTickerItem({
   item,
-  onHover,
 }: {
   item: MarketOverviewItem;
-  onHover: (id: string) => void;
 }) {
   return (
-    <div
-      className="flex flex-none cursor-default items-center gap-2 whitespace-nowrap text-xs font-semibold"
-      onMouseEnter={() => onHover(item.id)}
-    >
+    <div className="flex flex-none cursor-default items-center gap-2 whitespace-nowrap text-xs font-semibold">
       <span className="text-slate-500">{item.label}</span>
       <span className="font-extrabold tabular-nums text-[#071832]">{item.primary}</span>
       <span className={`font-extrabold tabular-nums ${marketToneClass(item.tone)}`}>{item.change}</span>
@@ -2049,10 +2371,10 @@ function marketToneClass(tone: MarketTone) {
 function MobileBottomNav({ onOpenVoice }: { onOpenVoice: () => void }) {
   const pathname = usePathname();
   const items = [
-    { href: "/home", label: "홈", icon: Home },
-    { href: "/my-strategy", label: "내전략", icon: ShieldCheck },
     { href: "/watchlist", label: "관심", icon: Heart },
-    { href: "/settings", label: "전체메뉴", icon: Menu },
+    { href: "/my-strategy", label: "전략", icon: ShieldCheck },
+    { href: "/home", label: "자산", icon: Home },
+    { href: "/settings", label: "환경", icon: Menu },
   ];
 
   return (
