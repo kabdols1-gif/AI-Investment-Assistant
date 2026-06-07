@@ -4,14 +4,17 @@ import { FormEvent, useEffect, useState } from "react";
 import { Check, ChevronDown, KeyRound, Link2, Loader2, Save, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/layout";
 import { useToast } from "@/components/ui";
+import { setSharedConfigStatus } from "@/hooks";
 import { getConfigStatus, saveKBConfig, saveLLMConfig, testKBConnection } from "@/lib/api/config";
 import { BROKER_PROVIDER_OPTIONS, getBrokerProviderOption } from "@/lib/brokerProviders";
+import { DEFAULT_CONFIG_STATUS } from "@/lib/configStatus";
 import { coerceLLMProvider, DEFAULT_LLM_PROVIDER, getDefaultLLMModel, getLLMProviderOption, LLM_PROVIDER_OPTIONS } from "@/lib/llmProviders";
 import type { BrokerProvider, ConfigStatus, KBConnectionTestResponse, LLMProvider } from "@/types/config";
 
 export default function SettingsPage() {
   const toast = useToast();
   const [status, setStatus] = useState<ConfigStatus | null>(null);
+  const [configLoadError, setConfigLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [llmProvider, setLlmProvider] = useState<LLMProvider>(DEFAULT_LLM_PROVIDER);
   const [isLlmProviderOpen, setIsLlmProviderOpen] = useState(false);
@@ -32,25 +35,32 @@ export default function SettingsPage() {
 
   useEffect(() => {
     let mounted = true;
+    const applyConfig = (config: ConfigStatus) => {
+      setStatus(config);
+      const nextProvider = coerceLLMProvider(config.llm_provider);
+      setLlmProvider(nextProvider);
+      setLlmModel(config.llm_model && config.llm_model !== "mock-voice-intent" ? config.llm_model : getDefaultLLMModel(nextProvider));
+      setLlmBaseUrl(config.llm_base_url || getLLMProviderOption(nextProvider).defaultBaseUrl);
+      const nextBroker = (config.broker_provider as BrokerProvider) || "kb";
+      setBrokerProvider(nextBroker);
+      setBrokerBaseUrl(config.kb_base_url || getBrokerProviderOption(nextBroker).defaultBaseUrl);
+    };
+
     getConfigStatus()
       .then((config) => {
         if (!mounted) return;
-        setStatus(config);
-        const nextProvider = coerceLLMProvider(config.llm_provider);
-        setLlmProvider(nextProvider);
-        setLlmModel(config.llm_model && config.llm_model !== "mock-voice-intent" ? config.llm_model : getDefaultLLMModel(nextProvider));
-        setLlmBaseUrl(config.llm_base_url || getLLMProviderOption(nextProvider).defaultBaseUrl);
-        const nextBroker = (config.broker_provider as BrokerProvider) || "kb";
-        setBrokerProvider(nextBroker);
-        setBrokerBaseUrl(config.kb_base_url || getBrokerProviderOption(nextBroker).defaultBaseUrl);
+        setConfigLoadError(null);
+        applyConfig(config);
       })
-      .catch(() => {
-        if (mounted) toast.warning("설정 상태를 불러오지 못했습니다.");
+      .catch((error) => {
+        if (!mounted) return;
+        applyConfig(DEFAULT_CONFIG_STATUS);
+        setConfigLoadError(error instanceof Error ? error.message : "설정 상태를 불러오지 못했습니다.");
       });
     return () => {
       mounted = false;
     };
-  }, [toast]);
+  }, []);
 
   const handleSelectLLMProvider = (provider: LLMProvider) => {
     if (provider === llmProvider) return;
@@ -79,6 +89,7 @@ export default function SettingsPage() {
         base_url: llmBaseUrl || null,
       });
       setStatus(response.config);
+      setSharedConfigStatus(response.config);
       setLlmKey("");
       toast.success(response.message);
     } catch (error) {
@@ -100,6 +111,7 @@ export default function SettingsPage() {
         base_url: brokerBaseUrl || null,
       });
       setStatus(response.config);
+      setSharedConfigStatus(response.config);
       setKbAppKey("");
       setKbSecret("");
       setKbAccount("");
@@ -137,6 +149,12 @@ export default function SettingsPage() {
 
   return (
     <AppShell screen="settings">
+      {configLoadError && (
+        <section className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800" role="alert">
+          설정 상태를 불러오지 못했습니다. 백엔드 연결을 확인해 주세요.
+          <span className="mt-1 block text-xs font-semibold text-amber-700">{configLoadError}</span>
+        </section>
+      )}
       <section className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <form onSubmit={handleSaveLLM} className="min-w-0 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center gap-2">
@@ -285,6 +303,8 @@ function LLMProviderCombobox({
       <button
         type="button"
         onClick={onToggle}
+        data-testid="settings-llm-provider-selector"
+        data-provider-id={selectedProvider.id}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-[#f3d58a] focus-ring"
@@ -342,6 +362,8 @@ function BrokerProviderCombobox({
       <button
         type="button"
         onClick={onToggle}
+        data-testid="settings-broker-selector"
+        data-broker-id={selectedBroker.id}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-[#f3d58a] focus-ring"
@@ -363,6 +385,8 @@ function BrokerProviderCombobox({
               key={broker.id}
               type="button"
               role="option"
+              data-testid="settings-broker-option"
+              data-broker-id={broker.id}
               aria-selected={broker.id === selectedBroker.id}
               onClick={() => onSelect(broker.id)}
               className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition hover:bg-[#fff8e1] focus-ring"
@@ -395,16 +419,17 @@ function ProviderLogo({
   accentClass?: string;
 }) {
   return (
-    <span className={`flex h-10 w-10 flex-none items-center justify-center rounded-lg border text-xs font-black ${accentClass}`}>
+    <span className={`relative flex h-10 w-10 flex-none items-center justify-center rounded-lg border text-xs font-black ${accentClass}`}>
+      <span className="px-1 text-center leading-none" aria-hidden={Boolean(logoUrl)}>
+        {mark}
+      </span>
       {logoUrl ? (
         <span
-          className="h-6 w-6 rounded-sm bg-contain bg-center bg-no-repeat"
+          className="absolute h-6 w-6 rounded-sm bg-white bg-contain bg-center bg-no-repeat"
           style={{ backgroundImage: `url(${logoUrl})` }}
           aria-label={name}
         />
-      ) : (
-        <span aria-label={name}>{mark}</span>
-      )}
+      ) : null}
     </span>
   );
 }

@@ -3,6 +3,10 @@
 import { useMemo, useState } from "react";
 import { BarChart3, Gauge, LineChart, PieChart, Target } from "lucide-react";
 import { AppShell } from "@/components/layout";
+import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
+import { useConfigStatus } from "@/hooks";
+import { getBrokerProviderOption } from "@/lib/brokerProviders";
+import { isBrokerConnected } from "@/lib/configStatus";
 import { assetAllocation, assetSummary, portfolioList } from "@/lib/mockData";
 
 const periodOptions = ["1개월", "3개월", "6개월", "1년", "전체"];
@@ -15,12 +19,16 @@ const periodChartHeights: Record<string, number[]> = {
 };
 
 export default function PortfolioPage() {
+  const { status: configStatus } = useConfigStatus();
   const [selectedPeriod, setSelectedPeriod] = useState("1년");
   const pieGradient = buildConicGradient();
   const chartHeights = useMemo(() => periodChartHeights[selectedPeriod] ?? periodChartHeights["1년"], [selectedPeriod]);
+  const brokerOption = getBrokerProviderOption(configStatus.broker_provider);
+  const brokerConnected = isBrokerConnected(configStatus);
 
   return (
     <AppShell screen="portfolio">
+      <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption}>
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="총 평가금액" value={assetSummary.totalAsset} />
         <Metric label="총 수익률" value={assetSummary.cumulativeReturn} profit />
@@ -110,6 +118,7 @@ export default function PortfolioPage() {
         <InsightCard icon={Target} title="목표 달성률" value="64%" description="목표 3억원, 예상 달성 2039.08" />
         <InsightCard icon={PieChart} title="위험 분산 진단" value="보통" description="포트폴리오 집중도 0.23" />
       </section>
+      </BrokerConnectionGate>
     </AppShell>
   );
 }

@@ -11,7 +11,8 @@ import {
   StockInput,
   OrderResultModal,
 } from "@/components/execute";
-import { useAuth, useAccount, useStrategyExecutor, useOrder } from "@/hooks";
+import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
+import { useAuth, useAccount, useStrategyExecutor, useOrder, useConfigStatus } from "@/hooks";
 import {
   getCurrentPrice,
   getBuyableAmount,
@@ -22,12 +23,15 @@ import {
   type PendingOrder,
   type CancelOrderRequest,
 } from "@/lib/api";
+import { getBrokerProviderOption } from "@/lib/brokerProviders";
+import { isBrokerConnected } from "@/lib/configStatus";
 import type { SignalResult } from "@/types/signal";
 import type { OrderRequest, OrderResult } from "@/types/order";
 import type { BuyableInfo } from "@/types/account";
 
 export default function ExecutePage() {
   const { status: authStatus } = useAuth();
+  const { status: configStatus } = useConfigStatus();
   const { holdings, balance, fetchHoldings, fetchBalance, resetThrottle, isLoading: accountLoading } = useAccount();
   const {
     strategies,
@@ -63,6 +67,8 @@ export default function ExecutePage() {
 
   // Pending orders state
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
+  const brokerOption = getBrokerProviderOption(configStatus.broker_provider);
+  const brokerConnected = isBrokerConnected(configStatus);
 
   // Fetch holdings, balance, and pending orders when authenticated
   // 순차 호출: 모의투자 모드의 초당 요청 제한 준수
@@ -283,14 +289,16 @@ export default function ExecutePage() {
 
           {/* Right Panel - Holdings */}
           <div className="lg:col-span-1">
-            <HoldingsList
-              holdings={holdings}
-              pendingOrders={pendingOrders}
-              balance={balance}
-              onRefresh={handleRefresh}
-              onCancelOrder={handleCancelOrder}
-              isLoading={accountLoading}
-            />
+            <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption}>
+              <HoldingsList
+                holdings={holdings}
+                pendingOrders={pendingOrders}
+                balance={balance}
+                onRefresh={handleRefresh}
+                onCancelOrder={handleCancelOrder}
+                isLoading={accountLoading}
+              />
+            </BrokerConnectionGate>
           </div>
         </div>
       </div>

@@ -12,7 +12,9 @@ import {
   Settings,
   Star,
 } from "lucide-react";
+import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
 import { useToast } from "@/components/ui";
+import type { BrokerProviderOption } from "@/lib/brokerProviders";
 import type {
   BalanceEvaluationRow,
   BrokerTradeRow,
@@ -38,9 +40,11 @@ const chartPeriods = ["1분", "5분", "15분", "30분", "일", "주", "월"];
 
 interface TradingWorkspaceProps {
   data: TradingWorkspaceData;
+  brokerConnected: boolean;
+  brokerOption: BrokerProviderOption;
 }
 
-export function TradingWorkspace({ data }: TradingWorkspaceProps) {
+export function TradingWorkspace({ data, brokerConnected, brokerOption }: TradingWorkspaceProps) {
   const toast = useToast();
   const [infoTab, setInfoTab] = useState<InfoTab>("호가");
   const [orderTab, setOrderTab] = useState<OrderTab>("매수");
@@ -80,25 +84,27 @@ export function TradingWorkspace({ data }: TradingWorkspaceProps) {
 
         <div className="mt-2 grid gap-2 2xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
           <MarketInfoPanel activeTab={infoTab} data={data} onTabChange={setInfoTab} />
-          <OrderFormPanel
-            activeTab={orderTab}
-            amount={orderAmount}
-            autoConfirm={autoConfirm}
-            autoPriority={autoPriority}
-            orderType={orderType}
-            price={price}
-            quantity={quantity}
-            ratio={ratio}
-            onAutoConfirmChange={setAutoConfirm}
-            onAutoPriorityChange={setAutoPriority}
-            onOrderTypeChange={setOrderType}
-            onPreview={previewOrder}
-            onPriceChange={setPrice}
-            onQuantityChange={setQuantity}
-            onRatioChange={setRatio}
-            onReset={resetOrder}
-            onTabChange={setOrderTab}
-          />
+          <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption}>
+            <OrderFormPanel
+              activeTab={orderTab}
+              amount={orderAmount}
+              autoConfirm={autoConfirm}
+              autoPriority={autoPriority}
+              orderType={orderType}
+              price={price}
+              quantity={quantity}
+              ratio={ratio}
+              onAutoConfirmChange={setAutoConfirm}
+              onAutoPriorityChange={setAutoPriority}
+              onOrderTypeChange={setOrderType}
+              onPreview={previewOrder}
+              onPriceChange={setPrice}
+              onQuantityChange={setQuantity}
+              onRatioChange={setRatio}
+              onReset={resetOrder}
+              onTabChange={setOrderTab}
+            />
+          </BrokerConnectionGate>
         </div>
       </section>
 
@@ -123,10 +129,14 @@ export function TradingWorkspace({ data }: TradingWorkspaceProps) {
           {bottomTab === "차트" && (
             <ChartPanel candles={data.chartCandles} period={period} onPeriodChange={setPeriod} stockName={data.stock.name} />
           )}
-          {bottomTab === "예수금" && <CashPanel rows={data.cashSummary} />}
-          {bottomTab === "주문내역" && <OrderHistoryPanel rows={data.orderHistory} />}
-          {bottomTab === "매매손익" && <ProfitLossPanel rows={data.profitLoss} />}
-          {bottomTab === "잔고평가" && <BalancePanel rows={data.balanceEvaluation} />}
+          {bottomTab !== "차트" && (
+            <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption} showNotice={false}>
+              {bottomTab === "예수금" && <CashPanel rows={data.cashSummary} />}
+              {bottomTab === "주문내역" && <OrderHistoryPanel rows={data.orderHistory} />}
+              {bottomTab === "매매손익" && <ProfitLossPanel rows={data.profitLoss} />}
+              {bottomTab === "잔고평가" && <BalancePanel rows={data.balanceEvaluation} />}
+            </BrokerConnectionGate>
+          )}
         </div>
       </section>
     </div>

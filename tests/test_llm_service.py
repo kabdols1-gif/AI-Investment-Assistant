@@ -2,7 +2,7 @@ import asyncio
 
 from backend.schemas.voice import VoiceCommand
 from backend.services import secure_config
-from backend.services.llm_service import LLMService
+from backend.services.llm_service import LLMProviderError, LLMService
 
 
 def _config(provider: str, api_key: str = "", base_url: str = "", model: str = "gpt-4.1-mini") -> dict:
@@ -37,6 +37,21 @@ def test_anthropic_without_key_exposes_provider_error(monkeypatch):
     assert intent.intent == "unknown"
     assert "anthropic API key is not configured" in intent.raw_summary
     assert "not implemented" not in intent.raw_summary
+
+
+def test_provider_http_error_is_exposed_to_user(monkeypatch):
+    monkeypatch.setattr(secure_config, "load_config", lambda: _config("openai", api_key="sk-test"))
+
+    async def fail_call(*args, **kwargs):
+        raise LLMProviderError("openai API returned HTTP 429: rate limit or quota was exceeded.")
+
+    monkeypatch.setattr(LLMService, "_call_openai_compatible", fail_call)
+
+    intent = asyncio.run(LLMService().interpret(VoiceCommand(text="시장 브리핑 알려줘", source="text")))
+
+    assert intent.intent == "unknown"
+    assert "HTTP 429" in intent.raw_summary
+    assert "rate limit" in (intent.assistant_message or "")
 
 
 def test_provider_json_response_is_normalized_for_chat_message():

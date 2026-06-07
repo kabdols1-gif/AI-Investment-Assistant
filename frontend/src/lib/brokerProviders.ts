@@ -9,6 +9,7 @@ export interface BrokerProviderOption {
   defaultBaseUrl: string;
   baseUrlPlaceholder: string;
   connectionTestSupported: boolean;
+  accountOpeningUrl?: string;
 }
 
 export const BROKER_PROVIDER_OPTIONS: BrokerProviderOption[] = [
@@ -21,6 +22,7 @@ export const BROKER_PROVIDER_OPTIONS: BrokerProviderOption[] = [
     defaultBaseUrl: "https://dbaasapi.kbsec.com:32484",
     baseUrlPlaceholder: "https://dbaasapi.kbsec.com:32484",
     connectionTestSupported: true,
+    accountOpeningUrl: "https://www.kbsec.com",
   },
   {
     id: "korea_investment",
@@ -31,12 +33,14 @@ export const BROKER_PROVIDER_OPTIONS: BrokerProviderOption[] = [
     defaultBaseUrl: "https://openapi.koreainvestment.com:9443",
     baseUrlPlaceholder: "https://openapi.koreainvestment.com:9443",
     connectionTestSupported: false,
+    accountOpeningUrl: "https://securities.koreainvestment.com",
   },
   {
     id: "mirae_asset",
     name: "미래에셋증권",
     mark: "미래",
     logoUrl: "https://www.google.com/s2/favicons?domain=securities.miraeasset.com&sz=64",
+    accountOpeningUrl: "https://securities.miraeasset.com",
     description: "미래에셋증권 OpenAPI",
     defaultBaseUrl: "",
     baseUrlPlaceholder: "증권사 OpenAPI Base URL",
@@ -46,7 +50,8 @@ export const BROKER_PROVIDER_OPTIONS: BrokerProviderOption[] = [
     id: "nh",
     name: "NH투자증권",
     mark: "NH",
-    logoUrl: "https://www.google.com/s2/favicons?domain=nhqv.com&sz=64",
+    logoUrl: "https://www.nhqv.com/favicon.ico",
+    accountOpeningUrl: "https://www.nhqv.com",
     description: "NH투자증권 OpenAPI",
     defaultBaseUrl: "",
     baseUrlPlaceholder: "증권사 OpenAPI Base URL",
@@ -57,6 +62,7 @@ export const BROKER_PROVIDER_OPTIONS: BrokerProviderOption[] = [
     name: "삼성증권",
     mark: "삼성",
     logoUrl: "https://www.google.com/s2/favicons?domain=samsungpop.com&sz=64",
+    accountOpeningUrl: "https://www.samsungpop.com",
     description: "삼성증권 OpenAPI",
     defaultBaseUrl: "",
     baseUrlPlaceholder: "증권사 OpenAPI Base URL",
@@ -66,7 +72,8 @@ export const BROKER_PROVIDER_OPTIONS: BrokerProviderOption[] = [
     id: "kiwoom",
     name: "키움증권",
     mark: "키움",
-    logoUrl: "https://www.google.com/s2/favicons?domain=kiwoom.com&sz=64",
+    logoUrl: "https://www.kiwoom.com/favicon.ico",
+    accountOpeningUrl: "https://www.kiwoom.com",
     description: "키움증권 OpenAPI",
     defaultBaseUrl: "",
     baseUrlPlaceholder: "증권사 OpenAPI Base URL",
@@ -77,6 +84,7 @@ export const BROKER_PROVIDER_OPTIONS: BrokerProviderOption[] = [
     name: "신한투자증권",
     mark: "신한",
     logoUrl: "https://www.google.com/s2/favicons?domain=shinhansec.com&sz=64",
+    accountOpeningUrl: "https://www.shinhansec.com",
     description: "신한투자증권 OpenAPI",
     defaultBaseUrl: "",
     baseUrlPlaceholder: "증권사 OpenAPI Base URL",
@@ -87,6 +95,7 @@ export const BROKER_PROVIDER_OPTIONS: BrokerProviderOption[] = [
     name: "대신증권",
     mark: "대신",
     logoUrl: "https://www.google.com/s2/favicons?domain=daishin.com&sz=64",
+    accountOpeningUrl: "https://www.daishin.com",
     description: "대신증권 OpenAPI",
     defaultBaseUrl: "",
     baseUrlPlaceholder: "증권사 OpenAPI Base URL",
@@ -97,6 +106,7 @@ export const BROKER_PROVIDER_OPTIONS: BrokerProviderOption[] = [
     name: "하나증권",
     mark: "하나",
     logoUrl: "https://www.google.com/s2/favicons?domain=hanaw.com&sz=64",
+    accountOpeningUrl: "https://www.hanaw.com",
     description: "하나증권 OpenAPI",
     defaultBaseUrl: "",
     baseUrlPlaceholder: "증권사 OpenAPI Base URL",

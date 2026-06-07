@@ -21,6 +21,28 @@ export interface RecentViewedStockItem {
   iconUrl?: string;
 }
 
+export interface HoldingSummaryItem {
+  id: string;
+  code: string;
+  name: string;
+  iconUrl?: string;
+  quantity: string;
+  valuationAmount: string;
+  profitLossAmount: string;
+  profitLossRate: string;
+  todayChangeRate: string;
+}
+
+export interface WatchlistSummaryItem {
+  id: string;
+  code: string;
+  name: string;
+  iconUrl?: string;
+  currentPrice: string;
+  changeRate: string;
+  watchReason: string;
+}
+
 export interface SymbolSearchResponse {
   query: string;
   total: number;

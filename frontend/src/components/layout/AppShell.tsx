@@ -32,15 +32,18 @@ import {
 } from "lucide-react";
 import { AIResponseCard, type AssistantResult } from "@/components/assistant/AIResponseCard";
 import { RiskNotice } from "@/components/safety/RiskNotice";
+import { BrokerConnectionNotice } from "@/components/settings/BrokerConnectionGate";
 import { RecentViewedStocksBar } from "@/components/symbols";
 import { FloatingMicButton, VoiceInputModal } from "@/components/voice";
 import { useToast } from "@/components/ui";
+import { CONFIG_STATUS_UPDATED_EVENT, setSharedConfigStatus } from "@/hooks/useConfigStatus";
 import { interpretVoice } from "@/lib/api/voice";
 import { getConfigStatus, saveKBConfig, saveLLMConfig } from "@/lib/api/config";
 import { BROKER_PROVIDER_OPTIONS, getBrokerProviderOption } from "@/lib/brokerProviders";
+import { isBrokerConnected } from "@/lib/configStatus";
 import { coerceLLMProvider, DEFAULT_LLM_PROVIDER, getDefaultLLMModel, getLLMProviderOption, LLM_PROVIDER_OPTIONS } from "@/lib/llmProviders";
 import { marketOverview, navScreens, recentViewedStocks, screenMeta, type MarketTone, type ScreenKey } from "@/lib/mockData";
-import type { BrokerProvider, LLMProvider } from "@/types/config";
+import type { BrokerProvider, ConfigStatus, LLMProvider } from "@/types/config";
 import type { RecentViewedStockItem } from "@/types/symbols";
 import type { LLMIntent } from "@/types/voice";
 
@@ -102,11 +105,13 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
   const [chatWidth, setChatWidth] = useState(320);
   const [selectedBroker, setSelectedBroker] = useState<BrokerProvider>("kb");
   const [selectedLlmProvider, setSelectedLlmProvider] = useState<LLMProvider>(DEFAULT_LLM_PROVIDER);
+  const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [isBrokerMenuOpen, setIsBrokerMenuOpen] = useState(false);
   const [isLlmMenuOpen, setIsLlmMenuOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [recentItems, setRecentItems] = useState<RecentViewedStockItem[]>(recentViewedStocks);
   const [activeRecentStockId, setActiveRecentStockId] = useState<string | null>(null);
+  const isLlmUnlocked = Boolean(configStatus?.llm_key_registered);
 
   const runAssistant = useCallback(
     async (
@@ -114,6 +119,11 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
       activeScreen: ScreenKey,
       source: "voice" | "text" = "text"
     ): Promise<LLMIntent | void> => {
+      if (!isLlmUnlocked) {
+        toast.info("LLM API Key를 먼저 연결해 주세요.");
+        router.push("/settings");
+        return;
+      }
       setChatMessages((messages) => [
         ...messages,
         { id: createChatMessageId("user"), role: "user", text },
@@ -143,7 +153,7 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
         setIsLoading(false);
       }
     },
-    [toast]
+    [isLlmUnlocked, router, toast]
   );
 
   const handleChatSubmit = useCallback(
@@ -170,7 +180,9 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
       setSelectedBroker(provider);
       setIsBrokerMenuOpen(false);
       try {
-        await saveKBConfig({ broker: provider });
+        const response = await saveKBConfig({ broker: provider });
+        setConfigStatus(response.config);
+        setSharedConfigStatus(response.config);
         toast.success(`${getBrokerProviderOption(provider).name} 선택을 저장했습니다.`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "증권사 선택 저장에 실패했습니다.";
@@ -186,11 +198,13 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
       setSelectedLlmProvider(provider);
       setIsLlmMenuOpen(false);
       try {
-        await saveLLMConfig({
+        const response = await saveLLMConfig({
           provider,
           model: getDefaultLLMModel(provider),
           base_url: nextProvider.defaultBaseUrl || null,
         });
+        setConfigStatus(response.config);
+        setSharedConfigStatus(response.config);
         toast.success(`${nextProvider.name} 선택을 저장했습니다.`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "LLM 선택 저장에 실패했습니다.";
@@ -282,6 +296,8 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
     getConfigStatus()
       .then((config) => {
         if (!mounted) return;
+        setConfigStatus(config);
+        setSharedConfigStatus(config);
         setSelectedLlmProvider(coerceLLMProvider(config.llm_provider));
         setSelectedBroker(getBrokerProviderOption(config.broker_provider).id);
       })
@@ -290,6 +306,19 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
     return () => {
       mounted = false;
     };
+  }, []);
+
+  useEffect(() => {
+    const handleConfigStatusUpdated = (event: Event) => {
+      const config = (event as CustomEvent<ConfigStatus>).detail;
+      if (!config) return;
+      setConfigStatus(config);
+      setSelectedLlmProvider(coerceLLMProvider(config.llm_provider));
+      setSelectedBroker(getBrokerProviderOption(config.broker_provider).id);
+    };
+
+    window.addEventListener(CONFIG_STATUS_UPDATED_EVENT, handleConfigStatusUpdated);
+    return () => window.removeEventListener(CONFIG_STATUS_UPDATED_EVENT, handleConfigStatusUpdated);
   }, []);
 
   useEffect(() => {
@@ -323,9 +352,10 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
   const selectedLlmOption = getLLMProviderOption(selectedLlmProvider);
   const isDarkTheme = theme === "dark";
   const hasRecentBar = recentItems.length > 0;
+  const brokerConnected = configStatus ? isBrokerConnected(configStatus) : true;
 
   return (
-    <div className="min-h-screen bg-[#fffaf0] text-[#071832]">
+    <div className="min-h-screen bg-white text-[#071832]">
       <header className="sticky top-0 z-50 border-b border-[#efd488] bg-white/95 backdrop-blur">
         <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
           <Link href="/home" className="flex flex-none items-center gap-3 rounded-lg focus-ring" aria-label="AI 투자비서 홈">
@@ -412,6 +442,8 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
               <button
                 type="button"
                 onClick={() => setIsBrokerMenuOpen((currentValue) => !currentValue)}
+                data-testid="app-broker-selector"
+                data-broker-id={selectedBrokerOption.id}
                 className={`flex h-10 w-full items-center rounded-lg border border-slate-200 bg-[#fffdf7] font-bold text-[#071832] outline-none transition hover:bg-[#fff8e1] focus:border-[#f6b100] focus:ring-2 focus:ring-[#f6b100]/30 ${
                   isNavCollapsed ? "justify-center px-1" : "justify-between gap-2 px-2"
                 }`}
@@ -439,6 +471,8 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
                       key={broker.id}
                       type="button"
                       role="option"
+                      data-testid="app-broker-option"
+                      data-broker-id={broker.id}
                       aria-selected={broker.id === selectedBrokerOption.id}
                       onClick={() => handleBrokerChange(broker.id)}
                       className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition hover:bg-[#fff8e1] focus-ring"
@@ -529,6 +563,10 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
             </div>
           )}
 
+          {!brokerConnected && (
+            <BrokerConnectionNotice broker={selectedBrokerOption} className={hasRecentBar ? "mb-4" : "mb-5 mt-2"} />
+          )}
+
           {screen !== "home" && (
             <section className="mb-5">
               <p className="text-xs font-extrabold text-[#8a6400]">AI 투자비서</p>
@@ -566,7 +604,9 @@ export function AppShell({ screen, children, selectedStock }: AppShellProps) {
             onProviderMenuToggle={() => setIsLlmMenuOpen((currentValue) => !currentValue)}
             onProviderChange={handleLlmProviderChange}
             onOpenVoice={() => setIsVoiceOpen(true)}
+            onOpenSettings={() => router.push("/settings")}
             onInputChange={setChatInput}
+            isUnlocked={isLlmUnlocked}
             onSubmit={handleChatSubmit}
           />
         ) : (
@@ -626,16 +666,17 @@ function ProviderLogo({
   const logoSize = size === "sm" ? "h-5 w-5" : "h-6 w-6";
 
   return (
-    <span className={`flex flex-none items-center justify-center border text-[10px] font-black ${frameSize} ${accentClass}`}>
+    <span className={`relative flex flex-none items-center justify-center border text-[10px] font-black ${frameSize} ${accentClass}`}>
+      <span className="px-1 text-center leading-none" aria-hidden={Boolean(logoUrl)}>
+        {mark}
+      </span>
       {logoUrl ? (
         <span
-          className={`${logoSize} rounded-sm bg-contain bg-center bg-no-repeat`}
+          className={`absolute ${logoSize} rounded-sm bg-white bg-contain bg-center bg-no-repeat`}
           style={{ backgroundImage: `url(${logoUrl})` }}
           aria-label={name}
         />
-      ) : (
-        <span aria-label={name}>{mark}</span>
-      )}
+      ) : null}
     </span>
   );
 }
@@ -666,7 +707,9 @@ function LLMChatPanel({
   onProviderMenuToggle,
   onProviderChange,
   onOpenVoice,
+  onOpenSettings,
   onInputChange,
+  isUnlocked,
   onSubmit,
 }: {
   messages: LLMChatMessage[];
@@ -686,7 +729,9 @@ function LLMChatPanel({
   onProviderMenuToggle: () => void;
   onProviderChange: (provider: LLMProvider) => void;
   onOpenVoice: () => void;
+  onOpenSettings: () => void;
   onInputChange: (value: string) => void;
+  isUnlocked: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const assistantTarget = selectedStock ? `${selectedStock.name}(${selectedStock.code})` : "투자 전략";
@@ -780,8 +825,31 @@ function LLMChatPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
-        <div className="rounded-lg border border-slate-200 bg-[#fffdf7] p-4 shadow-sm">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {!isUnlocked ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center px-6">
+            <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white/95 p-5 text-center shadow-xl backdrop-blur-sm">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#071832] text-[#f6b100] shadow-sm">
+                <Settings className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <p className="mt-4 text-sm font-extrabold text-[#071832]">LLM API Key를 연결하면 대화가 활성화됩니다.</p>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                설정 화면에서 API Key를 입력하면 종목 질문, 추천 질문, 음성 입력을 바로 사용할 수 있습니다.
+              </p>
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#f6b100] px-4 text-sm font-extrabold text-[#071832] transition hover:bg-[#e0a000] focus-ring"
+              >
+                <Settings className="h-4 w-4" aria-hidden="true" />
+                설정으로 이동
+              </button>
+            </div>
+          </div>
+        ) : null}
+        <div className={`flex min-h-0 flex-1 flex-col transition ${!isUnlocked ? "pointer-events-none select-none blur-[6px] opacity-40" : ""}`}>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+            <div className="rounded-lg border border-slate-200 bg-[#fffdf7] p-4 shadow-sm">
           <p className="text-sm font-extrabold text-[#071832]">안녕하세요! AI 투자비서입니다.</p>
           <p className="mt-3 text-sm leading-6 text-slate-700">{assistantTarget}에 대해 무엇을 도와드릴까요?</p>
         </div>
@@ -807,28 +875,29 @@ function LLMChatPanel({
           </div>
         ) : null}
 
-        <div className="space-y-2 pt-2">
+            <div className="space-y-2 pt-2">
           <p className="text-xs font-extrabold text-slate-500">{suggestionSubject} 추천 질문</p>
           {suggestions.map((question) => (
             <button
               key={question}
               type="button"
               onClick={() => onAskSuggestion(question)}
-              disabled={isLoading}
+              disabled={isLoading || !isUnlocked}
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-3 text-left text-sm font-bold leading-5 text-[#071832] transition hover:border-[#f3d58a] hover:bg-[#fff8e1] disabled:cursor-not-allowed disabled:text-slate-400 focus-ring"
             >
               {question}
             </button>
           ))}
-        </div>
-      </div>
+            </div>
+          </div>
 
-      <form onSubmit={onSubmit} className="flex flex-none flex-col gap-2 border-t border-slate-200 p-3">
+          <form onSubmit={onSubmit} className="flex flex-none flex-col gap-2 border-t border-slate-200 p-3">
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onOpenVoice}
-            className="flex h-10 w-10 flex-none items-center justify-center rounded-lg border border-slate-200 bg-white text-[#071832] transition hover:border-[#f3d58a] hover:bg-[#fff8e1] focus-ring"
+            disabled={!isUnlocked}
+            className="flex h-10 w-10 flex-none items-center justify-center rounded-lg border border-slate-200 bg-white text-[#071832] transition hover:border-[#f3d58a] hover:bg-[#fff8e1] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 focus-ring"
             aria-label="말하기"
             title="말하기"
           >
@@ -837,13 +906,13 @@ function LLMChatPanel({
           <input
             value={inputValue}
             onChange={(event) => onInputChange(event.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-[#f6b100] focus:ring-2 focus:ring-[#f6b100]/20"
+            className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-[#f6b100] focus:ring-2 focus:ring-[#f6b100]/20 disabled:cursor-not-allowed disabled:bg-slate-100"
             placeholder="LLM에게 문의하기"
-            disabled={isLoading}
+            disabled={isLoading || !isUnlocked}
           />
           <button
             type="submit"
-            disabled={!inputValue.trim() || isLoading}
+            disabled={!inputValue.trim() || isLoading || !isUnlocked}
             className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-[#f6b100] text-[#071832] transition hover:bg-[#e0a000] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 focus-ring"
             aria-label="문의 보내기"
             title="문의 보내기"
@@ -854,7 +923,9 @@ function LLMChatPanel({
         <p className="px-1 text-xs leading-5 text-slate-500">
           AI는 참고 정보 제공 목적이며, 투자 결정에 대한 책임은 사용자에게 있습니다.
         </p>
-      </form>
+          </form>
+        </div>
+      </div>
     </aside>
   );
 }

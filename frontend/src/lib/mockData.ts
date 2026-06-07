@@ -1,4 +1,4 @@
-import type { RecentViewedStockItem } from "@/types/symbols";
+import type { HoldingSummaryItem, RecentViewedStockItem, WatchlistSummaryItem } from "@/types/symbols";
 import type { TradingWorkspaceData, TradingStockSummary } from "@/types/trading";
 
 export type ScreenKey =
@@ -221,6 +221,72 @@ export const recentViewedStocks: RecentViewedStockItem[] = [
     changeRate: "+1.11%",
     changeDirection: "up",
     iconUrl: "https://www.google.com/s2/favicons?domain=hyundai.com&sz=64",
+  },
+];
+
+export const holdingsSummaryItems: HoldingSummaryItem[] = [
+  {
+    id: "005930",
+    code: "005930",
+    name: "삼성전자",
+    quantity: "100주",
+    valuationAmount: "6,620,000원",
+    profitLossAmount: "+320,000원",
+    profitLossRate: "+4.20%",
+    todayChangeRate: "-1.53%",
+    iconUrl: "https://www.google.com/s2/favicons?domain=samsung.com&sz=64",
+  },
+  {
+    id: "035420",
+    code: "035420",
+    name: "NAVER",
+    quantity: "50주",
+    valuationAmount: "10,200,000원",
+    profitLossAmount: "-180,000원",
+    profitLossRate: "-1.73%",
+    todayChangeRate: "-0.48%",
+    iconUrl: "https://www.google.com/s2/favicons?domain=naver.com&sz=64",
+  },
+  {
+    id: "373220",
+    code: "373220",
+    name: "LG에너지솔루션",
+    quantity: "30주",
+    valuationAmount: "10,875,000원",
+    profitLossAmount: "+275,000원",
+    profitLossRate: "+2.59%",
+    todayChangeRate: "+0.33%",
+    iconUrl: "https://www.google.com/s2/favicons?domain=lgensol.com&sz=64",
+  },
+];
+
+export const watchlistSummaryItems: WatchlistSummaryItem[] = [
+  {
+    id: "000660",
+    code: "000660",
+    name: "SK하이닉스",
+    currentPrice: "193,500원",
+    changeRate: "+2.61%",
+    watchReason: "반도체 업황 회복 기대",
+    iconUrl: "https://www.google.com/s2/favicons?domain=skhynix.com&sz=64",
+  },
+  {
+    id: "005380",
+    code: "005380",
+    name: "현대차",
+    currentPrice: "218,000원",
+    changeRate: "+1.17%",
+    watchReason: "전기차 판매 회복 기대",
+    iconUrl: "https://www.google.com/s2/favicons?domain=hyundai.com&sz=64",
+  },
+  {
+    id: "035720",
+    code: "035720",
+    name: "카카오",
+    currentPrice: "53,200원",
+    changeRate: "-0.75%",
+    watchReason: "플랫폼 사업 성장성",
+    iconUrl: "https://www.google.com/s2/favicons?domain=kakaocorp.com&sz=64",
   },
 ];
 

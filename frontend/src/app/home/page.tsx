@@ -4,14 +4,21 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Bell, ShieldCheck, Speaker } from "lucide-react";
 import { AppShell } from "@/components/layout";
+import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
 import { TradingWorkspace } from "@/components/trading";
 import { useToast } from "@/components/ui";
-import { HomeWatchlistSummary } from "@/components/watchlist/HomeWatchlistSummary";
+import { HoldingsAndWatchlistCard } from "@/components/watchlist/HoldingsAndWatchlistCard";
+import { useConfigStatus } from "@/hooks";
+import { getBrokerProviderOption } from "@/lib/brokerProviders";
+import { isBrokerConnected } from "@/lib/configStatus";
 import { assetSummary, notifications, tradingWorkspaceByStockId } from "@/lib/mockData";
 
 export default function HomePage() {
   const toast = useToast();
+  const { status: configStatus } = useConfigStatus();
   const [selectedStockId, setSelectedStockId] = useState<string | null>(null);
+  const brokerOption = getBrokerProviderOption(configStatus.broker_provider);
+  const brokerConnected = isBrokerConnected(configStatus);
 
   const selectedData = useMemo(() => {
     if (!selectedStockId) return null;
@@ -70,17 +77,29 @@ export default function HomePage() {
               </button>
               <p className="text-xs font-bold text-slate-500">최근 본 종목 선택 화면</p>
             </div>
-            <TradingWorkspace data={selectedData} />
+            <TradingWorkspace data={selectedData} brokerConnected={brokerConnected} brokerOption={brokerOption} />
           </div>
         ) : (
-          <DashboardHome onBriefingVoice={() => toast.info("시장 브리핑 음성 재생을 준비하고 있습니다.")} />
+          <DashboardHome
+            brokerConnected={brokerConnected}
+            brokerOption={brokerOption}
+            onBriefingVoice={() => toast.info("시장 브리핑 음성 재생을 준비하고 있습니다.")}
+          />
         )}
       </div>
     </AppShell>
   );
 }
 
-function DashboardHome({ onBriefingVoice }: { onBriefingVoice: () => void }) {
+function DashboardHome({
+  brokerConnected,
+  brokerOption,
+  onBriefingVoice,
+}: {
+  brokerConnected: boolean;
+  brokerOption: ReturnType<typeof getBrokerProviderOption>;
+  onBriefingVoice: () => void;
+}) {
   return (
     <>
       <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm lg:p-5">
@@ -110,14 +129,43 @@ function DashboardHome({ onBriefingVoice }: { onBriefingVoice: () => void }) {
         </div>
       </section>
 
-      <section className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="총자산" value={assetSummary.totalAsset} />
-        <MetricCard label="오늘 손익" value={assetSummary.todayProfit} accent="profit" sub={assetSummary.todayProfitRate} />
-        <MetricCard label="누적 수익률" value={assetSummary.cumulativeReturn} accent="profit" sub="연환산 +12.45%" />
-        <MetricCard label="예수금/주문가능금액" value={assetSummary.availableCash} />
-      </section>
+      <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption} className="mt-4">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            label="총자산"
+            value={assetSummary.totalAsset}
+            sub="전일 대비 +1.02%"
+            trend={[38, 42, 40, 47, 44, 52, 48, 59, 54, 64, 60, 67]}
+            trendTone="neutral"
+          />
+          <MetricCard
+            label="오늘 손익"
+            value={assetSummary.todayProfit}
+            accent="profit"
+            sub={assetSummary.todayProfitRate}
+            trend={[42, 39, 41, 45, 43, 49, 46, 55, 51, 65, 56, 60]}
+            trendTone="profit"
+          />
+          <MetricCard
+            label="누적 수익률"
+            value={assetSummary.cumulativeReturn}
+            accent="profit"
+            sub="연환산 +12.45%"
+            trend={[34, 37, 36, 41, 39, 44, 43, 49, 47, 55, 52, 58]}
+            trendTone="profit"
+          />
+          <MetricCard
+            label="예수금/주문가능금액"
+            value={assetSummary.availableCash}
+            sub="전일 대비 -1.05%"
+            subTone="loss"
+            trend={[56, 50, 54, 49, 52, 46, 48, 43, 45, 41, 44, 39]}
+            trendTone="loss"
+          />
+        </section>
+      </BrokerConnectionGate>
 
-      <HomeWatchlistSummary />
+      <HoldingsAndWatchlistCard brokerConnected={brokerConnected} brokerOption={brokerOption} />
 
       <section className="mt-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
@@ -145,19 +193,65 @@ function MetricCard({
   value,
   sub,
   accent,
+  subTone,
+  trend,
+  trendTone = "neutral",
 }: {
   label: string;
   value: string;
   sub?: string;
+  subTone?: "profit" | "loss" | "neutral";
   accent?: "profit" | "loss";
+  trend: number[];
+  trendTone?: "profit" | "loss" | "neutral";
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-xs font-semibold text-slate-500">{label}</p>
-      <p className={`mt-2 truncate text-lg font-extrabold ${accent === "profit" ? "text-profit" : accent === "loss" ? "text-loss" : "text-[#071832]"}`}>
+    <div className="relative min-h-[132px] overflow-hidden rounded-lg border border-[#dbe7f3] bg-white p-4 shadow-sm transition hover:border-[#f3d58a] hover:shadow-md">
+      <p className="text-xs font-bold text-slate-500">{label}</p>
+      <p className={`mt-3 truncate text-xl font-black tracking-normal ${accent === "profit" ? "text-profit" : accent === "loss" ? "text-loss" : "text-[#071832]"}`}>
         {value}
       </p>
-      {sub && <p className="mt-1 text-xs font-semibold text-slate-500">{sub}</p>}
+      {sub && <p className={`mt-2 text-xs font-bold ${metricToneClass(subTone ?? trendTone)}`}>{sub}</p>}
+      <MiniTrendLine values={trend} tone={trendTone} />
     </div>
   );
+}
+
+function MiniTrendLine({
+  values,
+  tone,
+}: {
+  values: number[];
+  tone: "profit" | "loss" | "neutral";
+}) {
+  const width = 108;
+  const height = 34;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const spread = max - min || 1;
+  const points = values
+    .map((value, index) => {
+      const x = (index / Math.max(values.length - 1, 1)) * width;
+      const y = height - ((value - min) / spread) * (height - 4) - 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const stroke = tone === "profit" ? "#ef4444" : tone === "loss" ? "#3b82f6" : "#3b82f6";
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="absolute bottom-4 right-4 h-9 w-28"
+      role="img"
+      aria-label="요약 추세"
+    >
+      <polyline points={points} fill="none" stroke={stroke} strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
+    </svg>
+  );
+}
+
+function metricToneClass(tone: "profit" | "loss" | "neutral") {
+  if (tone === "profit") return "text-profit";
+  if (tone === "loss") return "text-loss";
+  return "text-[#3b82f6]";
 }

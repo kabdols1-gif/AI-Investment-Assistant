@@ -45,6 +45,10 @@ export function ToastProvider({ children }: ToastProviderProps) {
   }, []);
 
   const addToast = useCallback((type: ToastType, message: string, duration = 3000) => {
+    if (toasts.some((current) => current.type === type && current.message === message)) {
+      return;
+    }
+
     const id = `toast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const toast: Toast = { id, type, message, duration };
     setToasts((prev) => [...prev, toast]);
@@ -52,7 +56,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
     if (duration > 0) {
       setTimeout(() => removeToast(id), duration);
     }
-  }, [removeToast]);
+  }, [removeToast, toasts]);
 
   const success = useCallback((message: string, duration?: number) => {
     addToast("success", message, duration);

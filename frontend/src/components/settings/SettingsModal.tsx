@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { X, RefreshCw, Database, Shield, Clock, Brain, KeyRound, Save } from "lucide-react";
 import { useAuth } from "@/hooks";
+import { setSharedConfigStatus } from "@/hooks/useConfigStatus";
 import { getMasterStatus, collectMasterFiles } from "@/lib/api/symbols";
 import { getConfigStatus, saveKBConfig, saveLLMConfig } from "@/lib/api/config";
 import { coerceLLMProvider, DEFAULT_LLM_PROVIDER, getDefaultLLMModel, LLM_PROVIDER_OPTIONS } from "@/lib/llmProviders";
@@ -90,6 +91,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         model: llmModel || null,
       });
       setConfigStatus(response.config);
+      setSharedConfigStatus(response.config);
       setLlmApiKey("");
     } catch (error) {
       console.error("Failed to save LLM config:", error);
@@ -108,6 +110,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         product_code: kbProductCode || null,
       });
       setConfigStatus(response.config);
+      setSharedConfigStatus(response.config);
       setKbApiKey("");
       setKbApiSecret("");
       setKbAccount("");

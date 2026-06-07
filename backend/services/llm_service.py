@@ -151,6 +151,55 @@ ALLOWED_SIDES = ("buy", "sell", "hold", "none")
 AVAILABLE_CONDITIONS = ("ma_cross", "price_above_ma", "rsi_above", "rsi_below", "momentum")
 
 
+class LLMProviderError(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+def _extract_response_detail(response: httpx.Response) -> str | None:
+    detail: object = None
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            detail = error.get("message") or error.get("code") or error.get("type")
+        else:
+            detail = data.get("message") or data.get("error_description") or data.get("detail")
+
+    if detail is None:
+        detail = response.text
+
+    text = str(detail or "").strip()
+    if not text:
+        return None
+    return re.sub(r"\s+", " ", text)[:320]
+
+
+def _http_status_message(provider: str, response: httpx.Response) -> str:
+    status = response.status_code
+    if status == 401:
+        reason = "authentication failed; check the API key."
+    elif status == 403:
+        reason = "access was denied; check account permissions and model access."
+    elif status == 404:
+        reason = "the endpoint or model was not found; check Base URL and model."
+    elif status == 429:
+        reason = "rate limit or quota was exceeded; check usage limits, billing, or retry later."
+    elif status >= 500:
+        reason = "the provider service returned a server error; retry later."
+    else:
+        reason = "the provider rejected the request."
+
+    message = f"{provider} API returned HTTP {status}: {reason}"
+    detail = _extract_response_detail(response)
+    return f"{message} Detail: {detail}" if detail else message
+
+
 def _safe_text(value: object) -> str | None:
     if value is None:
         return None
@@ -195,35 +244,38 @@ class LLMService:
     async def interpret(self, command: VoiceCommand) -> LLMIntent:
         config = secure_config.load_config()
         provider = config["llm"].get("provider") or secure_config.DEFAULT_LLM_PROVIDER
-        if provider in ("openai", "openai_compatible"):
-            if not (config["llm"].get("api_key") or "").strip():
-                return self._provider_error(command, f"{provider} API key is not configured.")
-            external = await self._call_openai_compatible(command, config["llm"], require_api_key=True)
-            if external:
-                return external
-            return self._provider_error(command, f"{provider} call failed.")
-        if provider == "anthropic":
-            if not (config["llm"].get("api_key") or "").strip():
-                return self._provider_error(command, "anthropic API key is not configured.")
-            external = await self._call_anthropic(command, config["llm"])
-            if external:
-                return external
-            return self._provider_error(command, "anthropic call failed.")
-        if provider == "gemini":
-            if not (config["llm"].get("api_key") or "").strip():
-                return self._provider_error(command, "gemini API key is not configured.")
-            external = await self._call_gemini(command, config["llm"])
-            if external:
-                return external
-            return self._provider_error(command, "gemini call failed.")
-        if provider == "local":
-            if not (config["llm"].get("base_url") or "").strip():
-                return self._provider_error(command, "local LLM base_url is not configured.")
-            external = await self._call_openai_compatible(command, config["llm"], require_api_key=False)
-            if external:
-                return external
-            return self._provider_error(command, "local LLM call failed.")
-        return self._provider_error(command, f"Unsupported LLM provider: {provider}.")
+        try:
+            if provider in ("openai", "openai_compatible"):
+                if not (config["llm"].get("api_key") or "").strip():
+                    return self._provider_error(command, f"{provider} API key is not configured.")
+                external = await self._call_openai_compatible(command, config["llm"], require_api_key=True)
+                if external:
+                    return external
+                return self._provider_error(command, f"{provider} returned an invalid response.")
+            if provider == "anthropic":
+                if not (config["llm"].get("api_key") or "").strip():
+                    return self._provider_error(command, "anthropic API key is not configured.")
+                external = await self._call_anthropic(command, config["llm"])
+                if external:
+                    return external
+                return self._provider_error(command, "anthropic returned an invalid response.")
+            if provider == "gemini":
+                if not (config["llm"].get("api_key") or "").strip():
+                    return self._provider_error(command, "gemini API key is not configured.")
+                external = await self._call_gemini(command, config["llm"])
+                if external:
+                    return external
+                return self._provider_error(command, "gemini returned an invalid response.")
+            if provider == "local":
+                if not (config["llm"].get("base_url") or "").strip():
+                    return self._provider_error(command, "local LLM base_url is not configured.")
+                external = await self._call_openai_compatible(command, config["llm"], require_api_key=False)
+                if external:
+                    return external
+                return self._provider_error(command, "local LLM returned an invalid response.")
+            return self._provider_error(command, f"Unsupported LLM provider: {provider}.")
+        except LLMProviderError as error:
+            return self._provider_error(command, error.message)
 
     def _system_prompt(self) -> str:
         return (
@@ -349,13 +401,22 @@ class LLMService:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as error:
                     if error.response.status_code not in (400, 422):
-                        raise
+                        raise LLMProviderError(_http_status_message(provider, error.response)) from error
                     fallback_payload = {key: value for key, value in payload.items() if key != "response_format"}
                     response = await client.post(endpoint, headers=headers, json=fallback_payload)
-                    response.raise_for_status()
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as fallback_error:
+                        raise LLMProviderError(
+                            _http_status_message(provider, fallback_error.response)
+                        ) from fallback_error
             content = response.json()["choices"][0]["message"]["content"]
             return self._parse_provider_text(content, command, provider)
-        except (httpx.HTTPError, KeyError, IndexError, TypeError):
+        except httpx.TimeoutException as error:
+            raise LLMProviderError(f"{provider} API request timed out.") from error
+        except httpx.HTTPError as error:
+            raise LLMProviderError(f"{provider} API request failed: {error.__class__.__name__}.") from error
+        except (KeyError, IndexError, TypeError):
             return None
 
     async def _call_anthropic(self, command: VoiceCommand, llm_config: dict) -> LLMIntent | None:
@@ -381,11 +442,18 @@ class LLMService:
                     },
                     json=payload,
                 )
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as error:
+                    raise LLMProviderError(_http_status_message("anthropic", error.response)) from error
             blocks = response.json()["content"]
             content = "".join(block.get("text", "") for block in blocks if isinstance(block, dict))
             return self._parse_provider_text(content, command, "anthropic")
-        except (httpx.HTTPError, KeyError, TypeError):
+        except httpx.TimeoutException as error:
+            raise LLMProviderError("anthropic API request timed out.") from error
+        except httpx.HTTPError as error:
+            raise LLMProviderError(f"anthropic API request failed: {error.__class__.__name__}.") from error
+        except (KeyError, TypeError):
             return None
 
     async def _call_gemini(self, command: VoiceCommand, llm_config: dict) -> LLMIntent | None:
@@ -413,22 +481,37 @@ class LLMService:
                     headers={"Content-Type": "application/json"},
                     json=payload,
                 )
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as error:
+                    raise LLMProviderError(_http_status_message("gemini", error.response)) from error
             parts = response.json()["candidates"][0]["content"]["parts"]
             content = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
             return self._parse_provider_text(content, command, "gemini")
-        except (httpx.HTTPError, KeyError, IndexError, TypeError):
+        except httpx.TimeoutException as error:
+            raise LLMProviderError("gemini API request timed out.") from error
+        except httpx.HTTPError as error:
+            raise LLMProviderError(f"gemini API request failed: {error.__class__.__name__}.") from error
+        except (KeyError, IndexError, TypeError):
             return None
 
     def _provider_error(self, command: VoiceCommand, message: str) -> LLMIntent:
+        if "HTTP 429" in message:
+            settings_hint = "OpenAI 사용량, 결제 상태, rate limit을 확인하거나 다른 API key/provider로 교체해 주세요."
+        elif "HTTP 401" in message:
+            settings_hint = "API key가 유효한지 확인하고 새 key를 저장해 주세요."
+        elif "HTTP 404" in message:
+            settings_hint = "Base URL과 model 값이 현재 provider에서 지원되는지 확인해 주세요."
+        else:
+            settings_hint = "설정 화면에서 provider, API key, Base URL, model 값을 확인해 주세요."
         return LLMIntent(
             intent="unknown",
             confidence=0.0,
             side="none",
             raw_summary=message,
-            assistant_message=f"{message} 설정 화면에서 provider, API key, Base URL, model 값을 확인해 주세요.",
+            assistant_message=f"{message} {settings_hint}",
             need_user_clarification=True,
-            clarification_question="LLM 설정 화면에서 provider, API key, base URL, model 값을 확인해 주세요.",
+            clarification_question=f"LLM {settings_hint}",
             mode=command.mode,
         )
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { Info, X } from "lucide-react";
 import type { RecentViewedStockItem } from "@/types/symbols";
 
 interface RecentViewedStocksBarProps {
@@ -21,34 +21,41 @@ export function RecentViewedStocksBar({
   }
 
   return (
-    <div className="-mx-1 overflow-x-auto pb-1">
-      <div className="flex min-w-max items-center gap-2 px-1 whitespace-nowrap">
+    <section className="rounded-lg bg-transparent" aria-label="최근 본 종목">
+      <div className="mb-2 flex items-center gap-2">
+        <h2 className="text-sm font-extrabold text-[#071832]">최근 본 종목</h2>
+        <Info className="h-4 w-4 text-slate-400" aria-hidden="true" />
+      </div>
+      <div className="-mx-1 overflow-x-auto pb-1">
+        <div className="flex min-w-max items-center gap-2 px-1 whitespace-nowrap">
         {items.map((item) => (
           <div
             key={item.id}
-            className={`flex h-12 items-center gap-2 rounded-lg border bg-white px-3 text-left shadow-sm transition focus-ring ${
+            className={`group flex h-14 min-w-[230px] items-center gap-2 rounded-lg border bg-white px-3 text-left shadow-sm transition focus-ring ${
               item.id === activeId
-                ? "border-[#f6b100] bg-[#fff8e1]"
-                : "border-slate-200 hover:border-[#f3d58a] hover:bg-[#fffdf7]"
+                ? "border-[#f6b100] bg-[#fff8e1] shadow-[0_8px_20px_rgba(246,177,0,0.16)]"
+                : "border-[#dbe7f3] hover:border-[#f3d58a] hover:bg-[#fffdf7] hover:shadow-md"
             }`}
           >
             <button
               type="button"
               onClick={() => onSelect(item.id)}
-              className="flex min-w-0 items-center gap-2 focus:outline-none"
+              className="flex min-w-0 flex-1 items-center gap-3 focus:outline-none"
               aria-pressed={item.id === activeId}
             >
               <StockLogo item={item} />
-              <span className="max-w-24 truncate text-sm font-extrabold text-[#071832]">{item.name}</span>
-              <span className="text-sm font-bold tabular-nums text-[#071832]">{item.price}</span>
-              <span className={`text-xs font-extrabold tabular-nums ${toneClass(item.changeDirection)}`}>
-                {item.changeRate}
+              <span className="grid min-w-0 flex-1 grid-cols-[minmax(72px,1fr)_auto_auto] items-baseline gap-3">
+                <span className="truncate text-sm font-extrabold text-[#071832]">{item.name}</span>
+                <span className="text-sm font-black tabular-nums text-[#071832]">{item.price}</span>
+                <span className={`text-xs font-black tabular-nums ${toneClass(item.changeDirection)}`}>
+                  {item.changeRate}
+                </span>
               </span>
             </button>
             <button
               type="button"
               onClick={() => onRemove(item.id)}
-              className="ml-1 flex h-6 w-6 flex-none items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-[#071832] focus-ring"
+              className="flex h-7 w-7 flex-none items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-[#071832] focus-ring"
               aria-label={`${item.name} 최근 본 종목에서 닫기`}
               title="닫기"
             >
@@ -56,23 +63,23 @@ export function RecentViewedStocksBar({
             </button>
           </div>
         ))}
+        </div>
       </div>
-    </div>
+    </section>
   );
 }
 
 function StockLogo({ item }: { item: RecentViewedStockItem }) {
   return (
-    <span className="flex h-8 w-8 flex-none items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-[#f8fafc] text-[10px] font-black text-[#071832]">
+    <span className="relative flex h-9 w-9 flex-none items-center justify-center overflow-hidden rounded-lg border border-[#dbe7f3] bg-[#f8fafc] text-[11px] font-black text-[#071832] shadow-sm">
+      <span aria-hidden={Boolean(item.iconUrl)}>{item.name.slice(0, 1)}</span>
       {item.iconUrl ? (
         <span
-          className="h-6 w-6 rounded bg-contain bg-center bg-no-repeat"
+          className="absolute h-7 w-7 rounded bg-[#f8fafc] bg-contain bg-center bg-no-repeat"
           style={{ backgroundImage: `url(${item.iconUrl})` }}
           aria-label={item.name}
         />
-      ) : (
-        item.name.slice(0, 1)
-      )}
+      ) : null}
     </span>
   );
 }
