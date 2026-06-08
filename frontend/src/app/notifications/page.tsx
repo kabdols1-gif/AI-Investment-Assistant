@@ -190,7 +190,7 @@ function NotificationDetailModal({ item, onClose }: { item: NotificationItem; on
           </div>
         )}
         <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <Link href={item.type === "전략" ? "/my-strategy" : item.type === "시스템" ? "/settings" : "/home"} className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-extrabold text-[#071832] hover:bg-slate-50 focus-ring">
+          <Link href={item.type === "전략" ? "/my-strategy" : item.type === "시스템" ? "/settings" : "/assets"} className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-extrabold text-[#071832] hover:bg-slate-50 focus-ring">
             관련 화면 보기
           </Link>
           <button type="button" onClick={onClose} className="inline-flex h-10 items-center rounded-lg bg-[#071832] px-4 text-sm font-extrabold text-white hover:bg-[#102642] focus-ring">

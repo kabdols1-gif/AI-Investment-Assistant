@@ -15,7 +15,7 @@ import { assetSummary, notifications, tradingWorkspaceByStockId } from "@/lib/mo
 
 type WorkspaceOrderSide = "buy" | "sell";
 
-export default function HomePage() {
+export default function AssetsPage() {
   const toast = useToast();
   const { status: configStatus } = useConfigStatus();
   const [selectedStockId, setSelectedStockId] = useState<string | null>(null);
@@ -67,7 +67,7 @@ export default function HomePage() {
 
   return (
     <AppShell
-      screen="home"
+      screen="assets"
       selectedStock={
         selectedData
           ? {
@@ -87,7 +87,7 @@ export default function HomePage() {
                   setSelectedStockId(null);
                   setWorkspaceOrderSide(null);
                   setWorkspaceOrderQuantity(null);
-                  window.history.replaceState(null, "", "/home");
+                  window.history.replaceState(null, "", "/assets");
                   window.dispatchEvent(new CustomEvent("recent-stock-selected", { detail: { id: null } }));
                 }}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-extrabold text-[#071832] shadow-sm transition hover:bg-[#fff8e1] focus-ring"

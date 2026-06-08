@@ -29,7 +29,8 @@ export interface VoiceCommand {
   locale?: string;
   mode: TradingMode;
   screen?:
-    | "home"
+    | "dashboard"
+    | "assets"
     | "my-strategy"
     | "market"
     | "strategy"

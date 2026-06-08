@@ -11,8 +11,8 @@ import {
   GripVertical,
   Heart,
   Home,
+  LayoutDashboard,
   LogOut,
-  Menu,
   MessageCircle,
   Mic,
   Moon,
@@ -47,7 +47,8 @@ import type { RecentViewedStockItem } from "@/types/symbols";
 import type { LLMIntent } from "@/types/voice";
 
 const iconMap = {
-  home: Home,
+  dashboard: LayoutDashboard,
+  assets: Home,
   "my-strategy": ShieldCheck,
   market: Flame,
   watchlist: Heart,
@@ -84,7 +85,8 @@ type StockWorkspaceOrderSide = "buy" | "sell";
 type ThemeMode = "light" | "dark";
 
 const persistentScreenByPathname: Partial<Record<string, ScreenKey>> = {
-  "/home": "home",
+  "/dashboard": "dashboard",
+  "/assets": "assets",
   "/my-settings": "my-settings",
   "/my-strategy": "my-strategy",
   "/market": "market",
@@ -186,7 +188,7 @@ export function PersistentAppShell({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  const stockId = screen === "home" ? searchParams.get("stock") : null;
+  const stockId = screen === "assets" ? searchParams.get("stock") : null;
   const selectedStock = getSelectedStockMeta(stockId);
 
   return (
@@ -221,10 +223,16 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
   const [activeRecentStockId, setActiveRecentStockId] = useState<string | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const isLlmUnlocked = Boolean(configStatus?.llm_key_registered);
-  const activeWorkspaceStock = selectedStock ?? (pathname === "/home" ? getSelectedStockMeta(activeRecentStockId) : undefined);
+  const activeWorkspaceStock = selectedStock ?? (pathname === "/assets" ? getSelectedStockMeta(activeRecentStockId) : undefined);
   const selectedStockCode = activeWorkspaceStock?.code ?? null;
 
   useEffect(() => {
+    if (screen === "market") {
+      setIsNavCollapsed(true);
+      setIsLlmPanelOpen(false);
+      return;
+    }
+
     if (selectedStockCode) {
       setIsNavCollapsed(true);
       setIsLlmPanelOpen(false);
@@ -233,7 +241,7 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
 
     setIsNavCollapsed(false);
     setIsLlmPanelOpen(true);
-  }, [selectedStockCode]);
+  }, [screen, selectedStockCode]);
 
   const runAssistant = useCallback(
     async (
@@ -360,7 +368,7 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
       const params = new URLSearchParams({ stock: id });
       if (options?.orderSide) params.set("order", options.orderSide);
       if (options?.quantity) params.set("quantity", options.quantity);
-      const nextUrl = `/home?${params.toString()}`;
+      const nextUrl = `/assets?${params.toString()}`;
       if (options?.addToRecent) {
         const recentItem = createRecentItemFromStock(id);
         if (recentItem) {
@@ -372,7 +380,7 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
         }
       }
       setActiveRecentStockId(id);
-      if (pathname === "/home") {
+      if (pathname === "/assets") {
         window.history.pushState(null, "", nextUrl);
         window.dispatchEvent(new CustomEvent("recent-stock-selected", { detail: { id, orderSide: options?.orderSide, quantity: options?.quantity } }));
         return;
@@ -398,8 +406,8 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
       });
       if (activeRecentStockId === id) {
         setActiveRecentStockId(null);
-        if (pathname === "/home") {
-          window.history.replaceState(null, "", "/home");
+        if (pathname === "/assets") {
+          window.history.replaceState(null, "", "/assets");
           window.dispatchEvent(new CustomEvent("recent-stock-selected", { detail: { id: null } }));
         }
       }
@@ -510,7 +518,7 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
 
   useEffect(() => {
     const syncActiveRecentStock = () => {
-      if (pathname !== "/home") {
+      if (pathname !== "/assets") {
         setActiveRecentStockId(null);
         return;
       }
@@ -549,7 +557,7 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
     <div className="min-h-screen bg-white text-[#071832]">
       <header className="sticky top-0 z-50 border-b border-[#efd488] bg-white/95 backdrop-blur">
         <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
-          <Link href="/home" className="flex flex-none items-center gap-3 rounded-lg focus-ring" aria-label="AI 투자비서 홈">
+          <Link href="/dashboard" className="flex flex-none items-center gap-3 rounded-lg focus-ring" aria-label="AI 투자비서 대시보드">
             <div className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-[#f6b100] text-[#071832]">
               <Sparkles className="h-5 w-5" aria-hidden="true" />
             </div>
@@ -686,7 +694,7 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
             {navScreens.map((key) => {
               const item = screenMeta[key];
               const Icon = iconMap[key];
-              const isActive = pathname === item.href || (pathname === "/" && key === "home");
+              const isActive = pathname === item.href || (pathname === "/" && key === "dashboard");
               return (
                 <Link
                   key={key}
@@ -738,7 +746,7 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
 
         <main
           className={`min-w-0 flex-1 ${
-            screen === "home"
+            screen === "assets"
               ? `px-3 pb-24 lg:px-4 lg:pb-10 ${hasRecentBar ? "pt-0" : "pt-2 lg:pt-3"}`
               : `px-4 pb-28 lg:px-6 lg:pb-12 ${hasRecentBar ? "pt-0" : "pt-5 lg:pt-6"}`
           }`}
@@ -758,7 +766,7 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
             <BrokerConnectionNotice broker={selectedBrokerOption} className={hasRecentBar ? "mb-4" : "mb-5 mt-2"} />
           )}
 
-          {screen !== "home" && (
+          {screen !== "assets" && (
             <section className="mb-5">
               <p className="text-xs font-extrabold text-[#8a6400]">AI 투자비서</p>
               <h1 className="mt-2 text-2xl font-extrabold tracking-normal text-[#071832] lg:text-4xl">{meta.title}</h1>
@@ -2371,10 +2379,10 @@ function marketToneClass(tone: MarketTone) {
 function MobileBottomNav({ onOpenVoice }: { onOpenVoice: () => void }) {
   const pathname = usePathname();
   const items = [
+    { href: "/dashboard", label: "대시", icon: LayoutDashboard },
     { href: "/watchlist", label: "관심", icon: Heart },
     { href: "/my-strategy", label: "전략", icon: ShieldCheck },
-    { href: "/home", label: "자산", icon: Home },
-    { href: "/settings", label: "환경", icon: Menu },
+    { href: "/assets", label: "자산", icon: Home },
   ];
 
   return (

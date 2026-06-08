@@ -2,7 +2,8 @@ import type { HoldingSummaryItem, RecentViewedStockItem, WatchlistSummaryItem } 
 import type { TradingWorkspaceData, TradingStockSummary } from "@/types/trading";
 
 export type ScreenKey =
-  | "home"
+  | "dashboard"
+  | "assets"
   | "my-strategy"
   | "market"
   | "strategy"
@@ -26,9 +27,17 @@ export interface ScreenMeta {
 }
 
 export const screenMeta: Record<ScreenKey, ScreenMeta> = {
-  home: {
-    key: "home",
-    href: "/home",
+  dashboard: {
+    key: "dashboard",
+    href: "/dashboard",
+    label: "대시보드",
+    title: "대시보드",
+    subtitle: "관심종목, 투자전략, 포트관리, 자산현황을 빠르게 확인",
+    placeholder: "무엇을 도와드릴까요? 예: 오늘 주요 현황 알려줘",
+  },
+  assets: {
+    key: "assets",
+    href: "/assets",
     label: "자산현황",
     title: "자산현황",
     subtitle: "오늘의 투자 현황과 AI 브리핑",
@@ -101,11 +110,12 @@ export const screenMeta: Record<ScreenKey, ScreenMeta> = {
 };
 
 export const navScreens: NavScreenKey[] = [
+  "dashboard",
   "watchlist",
   "my-strategy",
   "portfolio",
   "market",
-  "home",
+  "assets",
   "notifications",
   "settings",
 ];
@@ -679,9 +689,11 @@ export const tradingWorkspaceByStockId: Record<string, TradingWorkspaceData> = O
 export const quickActions = [
   { label: "투자전략", href: "/my-strategy", description: "전략 상태 확인" },
   { label: "전략제안", href: "/strategy", description: "AI 추천 전략" },
+  { label: "대시보드", href: "/dashboard", description: "주요 현황" },
   { label: "관심종목", href: "/watchlist", description: "종목 시그널" },
   { label: "포트관리", href: "/portfolio", description: "성과와 리스크" },
   { label: "시장현황", href: "/market", description: "시장 지표" },
+  { label: "자산현황", href: "/assets", description: "보유 자산" },
   { label: "알림설정", href: "/notifications", description: "중요 변화" },
   { label: "환경설정", href: "/settings", description: "연동과 보안" },
 ];
