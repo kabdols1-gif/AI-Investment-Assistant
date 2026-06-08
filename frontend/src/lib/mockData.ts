@@ -72,7 +72,7 @@ export const screenMeta: Record<ScreenKey, ScreenMeta> = {
     href: "/watchlist",
     label: "관심종목",
     title: "관심종목",
-    subtitle: "관심 종목의 시그널, 뉴스, 알림 관리",
+    subtitle: "관심 종목의 시그널, 뉴스",
     placeholder: "음성으로 말하거나 직접 입력하세요. 예: 오늘 관심 종목 알려줘",
   },
   portfolio: {

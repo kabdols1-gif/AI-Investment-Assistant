@@ -218,21 +218,29 @@ export default function WatchlistPage() {
               {trendFilters.map((filter) => {
                 const isActive = trendFilter === filter.id;
                 const Icon = filter.icon;
+                const count = getTrendFilterCount(items, marketFilter, filter.id);
+                const isArrowOnlyFilter = filter.id !== "all";
                 return (
                   <button
                     key={filter.id}
                     type="button"
                     aria-pressed={isActive}
+                    aria-label={isArrowOnlyFilter ? `${filter.label} ${count}개` : undefined}
+                    title={isArrowOnlyFilter ? `${filter.label} ${count}개` : undefined}
                     onClick={() => setTrendFilter(filter.id)}
-                    className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-bold transition focus-ring sm:flex-none ${
+                    className={`flex min-w-0 flex-1 items-center justify-center gap-2 rounded-md py-2 text-sm font-bold transition focus-ring sm:flex-none ${
                       isActive ? "bg-white text-[#071832] shadow-sm" : "text-slate-500 hover:text-[#071832]"
-                    }`}
+                    } ${isArrowOnlyFilter ? "px-3 sm:w-10" : "px-3"}`}
                   >
-                    {Icon ? <Icon className={`h-3.5 w-3.5 ${filter.id === "up" ? "text-profit" : "text-loss"}`} aria-hidden="true" /> : null}
-                    <span>{filter.label}</span>
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] ${isActive ? "bg-[#fff8e1] text-[#8a6400]" : "bg-white text-slate-500"}`}>
-                      {getTrendFilterCount(items, marketFilter, filter.id)}
-                    </span>
+                    {Icon ? <Icon className={`h-4 w-4 ${filter.id === "up" ? "text-profit" : "text-loss"}`} aria-hidden="true" /> : null}
+                    {!isArrowOnlyFilter && (
+                      <>
+                        <span>{filter.label}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] ${isActive ? "bg-[#fff8e1] text-[#8a6400]" : "bg-white text-slate-500"}`}>
+                          {count}
+                        </span>
+                      </>
+                    )}
                   </button>
                 );
               })}
