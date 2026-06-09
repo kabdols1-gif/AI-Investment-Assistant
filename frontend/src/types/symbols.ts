@@ -4,10 +4,12 @@
  * Stock Master File Management System
  */
 
+export type SymbolExchange = "kospi" | "kosdaq" | "nasdaq" | "nyse" | "amex";
+
 export interface Symbol {
   code: string;
   name: string;
-  exchange: "kospi" | "kosdaq";
+  exchange: SymbolExchange;
   exchange_name: string;
 }
 
@@ -54,16 +56,33 @@ export interface SymbolSearchResponse {
 export interface MasterStatus {
   kospi_count: number;
   kosdaq_count: number;
+  nasdaq_count?: number;
+  nyse_count?: number;
+  amex_count?: number;
+  domestic_count?: number;
+  overseas_count?: number;
   total_count: number;
   kospi_updated: string | null;
   kosdaq_updated: string | null;
+  nasdaq_updated?: string | null;
+  nyse_updated?: string | null;
+  amex_updated?: string | null;
+  counts?: Partial<Record<SymbolExchange, number>>;
+  updated?: Partial<Record<SymbolExchange, string | null>>;
   needs_update: boolean;
 }
 
 export interface CollectResult {
   success: boolean;
+  scope?: "all" | "domestic" | "overseas";
   kospi_count: number;
   kosdaq_count: number;
+  nasdaq_count?: number;
+  nyse_count?: number;
+  amex_count?: number;
+  domestic_count?: number;
+  overseas_count?: number;
   total_count: number;
+  counts?: Partial<Record<SymbolExchange, number>>;
   errors: string[];
 }

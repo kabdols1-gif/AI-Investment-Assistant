@@ -4,7 +4,10 @@
 마스터파일 수집 기능 포함 (CSV 저장, 인메모리 캐시)
 """
 
+import asyncio
+import csv
 import logging
+import re
 import zipfile
 from datetime import date, datetime
 from io import BytesIO
@@ -29,14 +32,33 @@ MASTER_URLS = {
     "kospi": "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip",
     "kosdaq": "https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip",
     # "konex": "https://new.real.download.dws.co.kr/common/master/konex_code.mst.zip",
-    # "nasdaq": "https://new.real.download.dws.co.kr/common/master/nasmst.cod.zip",
-    # "nyse": "https://new.real.download.dws.co.kr/common/master/nysmst.cod.zip",
-    # "amex": "https://new.real.download.dws.co.kr/common/master/amsmst.cod.zip",
+    "nasdaq": "https://new.real.download.dws.co.kr/common/master/nasmst.cod.zip",
+    "nyse": "https://new.real.download.dws.co.kr/common/master/nysmst.cod.zip",
+    "amex": "https://new.real.download.dws.co.kr/common/master/amsmst.cod.zip",
 }
+
+DOMESTIC_EXCHANGES = ("kospi", "kosdaq")
+OVERSEAS_EXCHANGES = ("nasdaq", "nyse", "amex")
+SUPPORTED_EXCHANGES = DOMESTIC_EXCHANGES + OVERSEAS_EXCHANGES
+COLLECTION_SCOPES = {
+    "all": SUPPORTED_EXCHANGES,
+    "domestic": DOMESTIC_EXCHANGES,
+    "overseas": OVERSEAS_EXCHANGES,
+}
+EXCHANGE_NAMES = {
+    "kospi": "코스피",
+    "kosdaq": "코스닥",
+    "nasdaq": "NASDAQ",
+    "nyse": "NYSE",
+    "amex": "AMEX",
+}
+DAILY_SYMBOL_LOAD_INTERVAL_SECONDS = 60 * 60
 
 # 인메모리 캐시
 _symbol_cache: dict[str, list[dict]] = {}
 _last_loaded: dict[str, datetime] = {}
+_collect_lock = asyncio.Lock()
+_daily_loader_task: Optional[asyncio.Task] = None
 
 
 # ============================================
@@ -74,19 +96,36 @@ class MasterStatus(BaseModel):
     """마스터파일 상태"""
     kospi_count: int = 0
     kosdaq_count: int = 0
+    nasdaq_count: int = 0
+    nyse_count: int = 0
+    amex_count: int = 0
+    domestic_count: int = 0
+    overseas_count: int = 0
     total_count: int = 0
     kospi_updated: Optional[str] = None
     kosdaq_updated: Optional[str] = None
+    nasdaq_updated: Optional[str] = None
+    nyse_updated: Optional[str] = None
+    amex_updated: Optional[str] = None
+    counts: dict[str, int] = Field(default_factory=dict)
+    updated: dict[str, Optional[str]] = Field(default_factory=dict)
     needs_update: bool = True
 
 
 class CollectResult(BaseModel):
     """마스터파일 수집 결과"""
     success: bool
+    scope: str = "all"
     kospi_count: int = 0
     kosdaq_count: int = 0
+    nasdaq_count: int = 0
+    nyse_count: int = 0
+    amex_count: int = 0
+    domestic_count: int = 0
+    overseas_count: int = 0
     total_count: int = 0
-    errors: list[str] = []
+    counts: dict[str, int] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)
 
 
 # ============================================
@@ -117,6 +156,11 @@ def _get_file_mtime(path: Path) -> Optional[datetime]:
     return None
 
 
+def _get_exchange_name(exchange: str) -> str:
+    """거래소 표시명"""
+    return EXCHANGE_NAMES.get(exchange, exchange.upper())
+
+
 def _load_from_csv(exchange: str) -> list[dict]:
     """CSV에서 종목 로드"""
     csv_path = _get_csv_path(exchange)
@@ -125,16 +169,18 @@ def _load_from_csv(exchange: str) -> list[dict]:
 
     symbols = []
     try:
-        with open(csv_path, "r", encoding="utf-8-sig") as f:
-            lines = f.readlines()
-            for line in lines[1:]:  # 헤더 스킵
-                parts = line.strip().split(",")
-                if len(parts) >= 3:
+        with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                row_exchange = (row.get("exchange") or exchange).strip().lower()
+                code = (row.get("code") or "").strip()
+                name = (row.get("name") or "").strip()
+                if code and name:
                     symbols.append({
-                        "code": parts[0],
-                        "name": parts[1],
-                        "exchange": parts[2],
-                        "exchange_name": "코스피" if parts[2] == "kospi" else "코스닥",
+                        "code": code,
+                        "name": name,
+                        "exchange": row_exchange,
+                        "exchange_name": _get_exchange_name(row_exchange),
                     })
     except Exception as e:
         logger.error(f"CSV 로드 오류 ({exchange}): {e}")
@@ -148,10 +194,15 @@ def _save_to_csv(exchange: str, symbols: list[dict]):
     csv_path = _get_csv_path(exchange)
     
     try:
-        with open(csv_path, "w", encoding="utf-8-sig") as f:
-            f.write("code,name,exchange\n")
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["code", "name", "exchange"])
+            writer.writeheader()
             for s in symbols:
-                f.write(f"{s['code']},{s['name']},{s['exchange']}\n")
+                writer.writerow({
+                    "code": s["code"],
+                    "name": s["name"],
+                    "exchange": s["exchange"],
+                })
         logger.info(f"CSV 저장 완료: {csv_path} ({len(symbols)}개)")
     except Exception as e:
         logger.error(f"CSV 저장 오류 ({exchange}): {e}")
@@ -166,7 +217,7 @@ def _get_all_symbols() -> list[dict]:
 
     all_symbols = []
 
-    for exchange in ["kospi", "kosdaq"]:
+    for exchange in SUPPORTED_EXCHANGES:
         # 캐시 확인
         if exchange in _symbol_cache:
             all_symbols.extend(_symbol_cache[exchange])
@@ -274,61 +325,51 @@ async def get_master_status() -> MasterStatus:
     
     현재 로드된 종목 수, 마지막 업데이트 시간, 업데이트 필요 여부를 반환합니다.
     """
-    kospi_path = _get_csv_path("kospi")
-    kosdaq_path = _get_csv_path("kosdaq")
-    
-    # 캐시에서 로드 또는 CSV에서 로드
-    kospi_symbols = _symbol_cache.get("kospi", []) or _load_from_csv("kospi")
-    kosdaq_symbols = _symbol_cache.get("kosdaq", []) or _load_from_csv("kosdaq")
-    
-    kospi_count = len(kospi_symbols)
-    kosdaq_count = len(kosdaq_symbols)
-    
-    kospi_mtime = _get_file_mtime(kospi_path)
-    kosdaq_mtime = _get_file_mtime(kosdaq_path)
-    
+    counts: dict[str, int] = {}
+    updated: dict[str, Optional[str]] = {}
+
+    for exchange in SUPPORTED_EXCHANGES:
+        symbols = _symbol_cache.get(exchange) or _load_from_csv(exchange)
+        counts[exchange] = len(symbols)
+        mtime = _get_file_mtime(_get_csv_path(exchange))
+        updated[exchange] = mtime.isoformat() if mtime else None
+
+    domestic_count = sum(counts[exchange] for exchange in DOMESTIC_EXCHANGES)
+    overseas_count = sum(counts[exchange] for exchange in OVERSEAS_EXCHANGES)
+
     return MasterStatus(
-        kospi_count=kospi_count,
-        kosdaq_count=kosdaq_count,
-        total_count=kospi_count + kosdaq_count,
-        kospi_updated=kospi_mtime.isoformat() if kospi_mtime else None,
-        kosdaq_updated=kosdaq_mtime.isoformat() if kosdaq_mtime else None,
+        kospi_count=counts["kospi"],
+        kosdaq_count=counts["kosdaq"],
+        nasdaq_count=counts["nasdaq"],
+        nyse_count=counts["nyse"],
+        amex_count=counts["amex"],
+        domestic_count=domestic_count,
+        overseas_count=overseas_count,
+        total_count=domestic_count + overseas_count,
+        kospi_updated=updated["kospi"],
+        kosdaq_updated=updated["kosdaq"],
+        nasdaq_updated=updated["nasdaq"],
+        nyse_updated=updated["nyse"],
+        amex_updated=updated["amex"],
+        counts=counts,
+        updated=updated,
         needs_update=_check_needs_update(),
     )
 
 
 @router.post("/collect", response_model=CollectResult)
-async def collect_master_files() -> CollectResult:
+async def collect_master_files(
+    scope: str = Query(default="all", description="수집 범위: all, domestic, overseas"),
+) -> CollectResult:
     """마스터파일 수집
     
     거래 API 서버에서 코스피/코스닥 마스터파일을 다운로드합니다.
     수집된 데이터는 master/kis/raw 및 master/kis/parsed 디렉토리에 저장됩니다.
     """
-    errors = []
-    kospi_count = 0
-    kosdaq_count = 0
-    
-    # 코스피 수집
-    symbols, error = await _download_and_parse("kospi")
-    if error:
-        errors.append(f"kospi: {error}")
-    else:
-        kospi_count = len(symbols)
-    
-    # 코스닥 수집
-    symbols, error = await _download_and_parse("kosdaq")
-    if error:
-        errors.append(f"kosdaq: {error}")
-    else:
-        kosdaq_count = len(symbols)
-    
-    return CollectResult(
-        success=len(errors) == 0,
-        kospi_count=kospi_count,
-        kosdaq_count=kosdaq_count,
-        total_count=kospi_count + kosdaq_count,
-        errors=errors,
-    )
+    try:
+        return await collect_symbol_master_files(scope=scope)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ============================================
@@ -340,7 +381,7 @@ async def collect_master_files() -> CollectResult:
 async def search_symbols_api(
     q: str = Query(..., min_length=1, max_length=50, description="검색어 (종목코드 또는 종목명)"),
     limit: int = Query(default=20, ge=1, le=50, description="최대 결과 수"),
-    exchange: Optional[str] = Query(default=None, description="거래소 필터 (kospi, kosdaq)"),
+    exchange: Optional[str] = Query(default=None, description="거래소 필터 (kospi, kosdaq, nasdaq, nyse, amex)"),
 ) -> SymbolSearchResponse:
     """종목 검색
 
@@ -349,7 +390,7 @@ async def search_symbols_api(
     Args:
         q: 검색어 (종목코드 또는 종목명)
         limit: 최대 결과 수 (1-50, 기본 20)
-        exchange: 거래소 필터 (kospi, kosdaq)
+        exchange: 거래소 필터 (kospi, kosdaq, nasdaq, nyse, amex)
 
     Returns:
         검색 결과
@@ -360,10 +401,10 @@ async def search_symbols_api(
         - GET /api/symbols/search?q=에코&exchange=kosdaq
     """
     # 거래소 필터 검증
-    if exchange and exchange.lower() not in ("kospi", "kosdaq"):
+    if exchange and exchange.lower() not in SUPPORTED_EXCHANGES:
         raise HTTPException(
             status_code=400,
-            detail=f"지원하지 않는 거래소입니다: {exchange}. 'kospi' 또는 'kosdaq'만 지원합니다.",
+            detail=f"지원하지 않는 거래소입니다: {exchange}. {', '.join(SUPPORTED_EXCHANGES)} 중 하나를 지정하세요.",
         )
 
     results = search_symbols(q, limit=limit, exchange=exchange)
@@ -437,11 +478,57 @@ def _parse_kospi_kosdaq_mst(content: bytes, exchange: str) -> list[dict]:
                     "code": code,
                     "name": name,
                     "exchange": exchange,
-                    "exchange_name": "코스피" if exchange == "kospi" else "코스닥",
+                    "exchange_name": _get_exchange_name(exchange),
                 })
     except Exception as e:
         logger.error(f"마스터파일 파싱 오류 ({exchange}): {e}")
     
+    return symbols
+
+
+def _decode_master_content(content: bytes) -> str:
+    """마스터 파일 바이트를 텍스트로 디코딩"""
+    for encoding in ("utf-8-sig", "cp949", "euc-kr"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="ignore")
+
+
+def _parse_overseas_mst(content: bytes, exchange: str) -> list[dict]:
+    """NASDAQ/NYSE/AMEX 마스터파일 파싱"""
+    symbols: list[dict] = []
+    text = _decode_master_content(content)
+
+    for line in text.splitlines():
+        raw_line = line.strip()
+        if not raw_line:
+            continue
+
+        parts = raw_line.split("\t")
+        if len(parts) < 7:
+            parts = [part for part in re.split(r"\s{2,}|\|", raw_line) if part]
+
+        code = ""
+        name = ""
+        if len(parts) >= 7:
+            code = parts[4].strip()
+            name = parts[6].strip()
+            if not name and len(parts) >= 8:
+                name = parts[7].strip()
+        elif len(parts) >= 2:
+            code = parts[0].strip()
+            name = parts[1].strip()
+
+        if code and name:
+            symbols.append({
+                "code": code,
+                "name": name,
+                "exchange": exchange,
+                "exchange_name": _get_exchange_name(exchange),
+            })
+
     return symbols
 
 
@@ -465,6 +552,7 @@ async def _download_and_parse(exchange: str, timeout: float = 60.0) -> tuple[lis
         _get_raw_path(exchange).write_bytes(content)
         
         # ZIP 압축 해제
+        extracted = content
         try:
             with zipfile.ZipFile(BytesIO(content)) as zf:
                 for name in zf.namelist():
@@ -474,15 +562,20 @@ async def _download_and_parse(exchange: str, timeout: float = 60.0) -> tuple[lis
             extracted = content
         
         # 파싱
-        symbols = _parse_kospi_kosdaq_mst(extracted, exchange)
+        if exchange in DOMESTIC_EXCHANGES:
+            symbols = _parse_kospi_kosdaq_mst(extracted, exchange)
+        else:
+            symbols = _parse_overseas_mst(extracted, exchange)
+
+        if not symbols:
+            return [], "수집된 종목이 없습니다"
         
-        if symbols:
-            # CSV 저장
-            _save_to_csv(exchange, symbols)
-            # 캐시 업데이트
-            _symbol_cache[exchange] = symbols
-            _last_loaded[exchange] = datetime.now()
-            logger.info(f"마스터파일 수집 완료: {exchange} - {len(symbols)}개 종목")
+        # CSV 저장
+        _save_to_csv(exchange, symbols)
+        # 캐시 업데이트
+        _symbol_cache[exchange] = symbols
+        _last_loaded[exchange] = datetime.now()
+        logger.info(f"마스터파일 수집 완료: {exchange} - {len(symbols)}개 종목")
         
         return symbols, None
         
@@ -495,13 +588,114 @@ async def _download_and_parse(exchange: str, timeout: float = 60.0) -> tuple[lis
         return [], str(e)
 
 
-def _check_needs_update() -> bool:
+def _resolve_collection_scope(scope: str) -> tuple[str, ...]:
+    normalized_scope = scope.lower().strip()
+    exchanges = COLLECTION_SCOPES.get(normalized_scope)
+    if not exchanges:
+        raise ValueError(f"지원하지 않는 수집 범위입니다: {scope}. all, domestic, overseas 중 하나를 지정하세요.")
+    return exchanges
+
+
+def _build_collect_result(scope: str, counts: dict[str, int], errors: list[str]) -> CollectResult:
+    domestic_count = sum(counts.get(exchange, 0) for exchange in DOMESTIC_EXCHANGES)
+    overseas_count = sum(counts.get(exchange, 0) for exchange in OVERSEAS_EXCHANGES)
+
+    return CollectResult(
+        success=len(errors) == 0,
+        scope=scope,
+        kospi_count=counts.get("kospi", 0),
+        kosdaq_count=counts.get("kosdaq", 0),
+        nasdaq_count=counts.get("nasdaq", 0),
+        nyse_count=counts.get("nyse", 0),
+        amex_count=counts.get("amex", 0),
+        domestic_count=domestic_count,
+        overseas_count=overseas_count,
+        total_count=domestic_count + overseas_count,
+        counts=counts,
+        errors=errors,
+    )
+
+
+async def collect_symbol_master_files(scope: str = "all") -> CollectResult:
+    """지정 범위의 종목 마스터파일을 수집"""
+    normalized_scope = scope.lower().strip()
+    exchanges = _resolve_collection_scope(normalized_scope)
+    counts = {exchange: 0 for exchange in SUPPORTED_EXCHANGES}
+    errors: list[str] = []
+
+    async with _collect_lock:
+        for exchange in exchanges:
+            symbols, error = await _download_and_parse(exchange)
+            if error:
+                errors.append(f"{exchange}: {error}")
+            else:
+                counts[exchange] = len(symbols)
+
+    return _build_collect_result(normalized_scope, counts, errors)
+
+
+async def ensure_daily_symbol_master_loaded(force: bool = False) -> Optional[CollectResult]:
+    """오늘 날짜 기준으로 마스터파일이 없거나 오래됐으면 수집"""
+    _get_all_symbols()
+    if not force and not _check_needs_update():
+        logger.info("종목 마스터파일 일일 수집 생략: 오늘 데이터가 이미 로드되었습니다.")
+        return None
+
+    logger.info("종목 마스터파일 일일 수집 시작")
+    result = await collect_symbol_master_files(scope="all")
+    if result.success:
+        logger.info("종목 마스터파일 일일 수집 완료: %s개", result.total_count)
+    else:
+        logger.warning("종목 마스터파일 일일 수집 일부 실패: %s", result.errors)
+    return result
+
+
+async def _daily_symbol_loader_loop() -> None:
+    while True:
+        try:
+            await ensure_daily_symbol_master_loaded()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("종목 마스터파일 일일 로더 오류: %s", e)
+
+        await asyncio.sleep(DAILY_SYMBOL_LOAD_INTERVAL_SECONDS)
+
+
+async def start_daily_symbol_loader() -> None:
+    """종목 마스터파일 일일 로더 시작"""
+    global _daily_loader_task
+
+    _get_all_symbols()
+    if _daily_loader_task and not _daily_loader_task.done():
+        return
+
+    _daily_loader_task = asyncio.create_task(_daily_symbol_loader_loop())
+
+
+async def stop_daily_symbol_loader() -> None:
+    """종목 마스터파일 일일 로더 종료"""
+    global _daily_loader_task
+
+    if not _daily_loader_task:
+        return
+
+    _daily_loader_task.cancel()
+    try:
+        await _daily_loader_task
+    except asyncio.CancelledError:
+        pass
+    finally:
+        _daily_loader_task = None
+
+
+def _check_needs_update(exchanges: tuple[str, ...] = SUPPORTED_EXCHANGES) -> bool:
     """오늘 업데이트가 필요한지 확인"""
-    for exchange in ["kospi", "kosdaq"]:
+    for exchange in exchanges:
         csv_path = _get_csv_path(exchange)
         if not csv_path.exists():
             return True
         mtime = _get_file_mtime(csv_path)
-        if mtime and mtime.date() < date.today():
+        if not mtime or mtime.date() < date.today():
             return True
     return False

@@ -156,6 +156,14 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   if (!isOpen) return null;
 
   const isDev = status.mode === "vps";
+  const domesticMasterCount = masterStatus
+    ? masterStatus.domestic_count ?? masterStatus.kospi_count + masterStatus.kosdaq_count
+    : 0;
+  const overseasMasterCount = masterStatus
+    ? masterStatus.overseas_count
+        ?? (masterStatus.nasdaq_count ?? 0) + (masterStatus.nyse_count ?? 0) + (masterStatus.amex_count ?? 0)
+    : 0;
+  const formatMasterCount = (count?: number) => (count ?? 0).toLocaleString();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -415,17 +423,37 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 <>
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="flex items-center justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">국내</span>
+                      <span className="font-mono font-semibold">{domesticMasterCount.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">해외</span>
+                      <span className="font-mono font-semibold">{overseasMasterCount.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
                       <span className="text-slate-600 dark:text-slate-400">KOSPI</span>
-                      <span className="font-mono">{masterStatus.kospi_count.toLocaleString()}</span>
+                      <span className="font-mono">{formatMasterCount(masterStatus.kospi_count)}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-slate-600 dark:text-slate-400">KOSDAQ</span>
-                      <span className="font-mono">{masterStatus.kosdaq_count.toLocaleString()}</span>
+                      <span className="font-mono">{formatMasterCount(masterStatus.kosdaq_count)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">NASDAQ</span>
+                      <span className="font-mono">{formatMasterCount(masterStatus.nasdaq_count)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">NYSE</span>
+                      <span className="font-mono">{formatMasterCount(masterStatus.nyse_count)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">AMEX</span>
+                      <span className="font-mono">{formatMasterCount(masterStatus.amex_count)}</span>
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-slate-600 dark:text-slate-400">Total</span>
-                    <span className="font-mono font-bold">{masterStatus.total_count.toLocaleString()}</span>
+                    <span className="font-mono font-bold">{formatMasterCount(masterStatus.total_count)}</span>
                   </div>
                   {masterStatus.kospi_updated && (
                     <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -451,10 +479,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 {isCollecting ? (
                   <span className="flex items-center justify-center gap-2">
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    수집 중...
+                    전체 수집 중...
                   </span>
                 ) : (
-                  "마스터 수집"
+                  "전체 마스터 수집"
                 )}
               </button>
             </div>

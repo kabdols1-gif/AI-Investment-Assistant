@@ -42,6 +42,8 @@ ENV/
 # KIS
 /.master/
 /KIS/
+/master/kis/raw/
+/master/kis/parsed/*.csv
 
 # Logs
 *.log

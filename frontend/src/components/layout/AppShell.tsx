@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, DragEvent as ReactDragEvent, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useContext, useEffect, useState } from "react";
 import {
   Bell,
+  ChartCandlestick,
   Check,
   ChevronDown,
   Flame,
@@ -41,7 +42,8 @@ import { getConfigStatus, saveKBConfig, saveLLMConfig } from "@/lib/api/config";
 import { BROKER_PROVIDER_OPTIONS, getBrokerProviderOption } from "@/lib/brokerProviders";
 import { isBrokerConnected } from "@/lib/configStatus";
 import { coerceLLMProvider, DEFAULT_LLM_PROVIDER, getDefaultLLMModel, getLLMProviderOption, LLM_PROVIDER_OPTIONS } from "@/lib/llmProviders";
-import { marketOverview, navScreens, recentViewedStocks, screenMeta, tradingWorkspaceByStockId, type MarketTone, type ScreenKey } from "@/lib/mockData";
+import { marketOverview, recentViewedStocks, screenMeta, tradingWorkspaceByStockId, type MarketTone, type NavScreenKey, type ScreenKey } from "@/lib/mockData";
+import { getStoredNavOrder, LAST_SCREEN_STORAGE_KEY, normalizeNavOrder, PINNED_NAV_SCREEN, sanitizeLastScreenPath, saveNavOrder } from "@/lib/navigationPersistence";
 import type { BrokerProvider, ConfigStatus, LLMProvider } from "@/types/config";
 import type { RecentViewedStockItem } from "@/types/symbols";
 import type { LLMIntent } from "@/types/voice";
@@ -50,7 +52,7 @@ const iconMap = {
   dashboard: LayoutDashboard,
   assets: Home,
   "my-strategy": ShieldCheck,
-  market: Flame,
+  market: ChartCandlestick,
   watchlist: Heart,
   portfolio: PieChart,
   notifications: Bell,
@@ -222,9 +224,20 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
   const [recentItems, setRecentItems] = useState<RecentViewedStockItem[]>(getInitialRecentItems);
   const [activeRecentStockId, setActiveRecentStockId] = useState<string | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [navOrder, setNavOrder] = useState<NavScreenKey[]>(getStoredNavOrder);
+  const [draggedNavKey, setDraggedNavKey] = useState<NavScreenKey | null>(null);
+  const [navDropTarget, setNavDropTarget] = useState<NavScreenKey | null>(null);
   const isLlmUnlocked = Boolean(configStatus?.llm_key_registered);
   const activeWorkspaceStock = selectedStock ?? (pathname === "/assets" ? getSelectedStockMeta(activeRecentStockId) : undefined);
   const selectedStockCode = activeWorkspaceStock?.code ?? null;
+
+  useEffect(() => {
+    const nextPath = `${window.location.pathname}${window.location.search}`;
+    const safePath = sanitizeLastScreenPath(nextPath);
+    if (safePath) {
+      window.localStorage.setItem(LAST_SCREEN_STORAGE_KEY, safePath);
+    }
+  }, [activeRecentStockId, pathname, selectedStockCode]);
 
   useEffect(() => {
     if (screen === "market") {
@@ -414,6 +427,59 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
     },
     [activeRecentStockId, pathname]
   );
+
+  const moveNavItem = useCallback((sourceKey: NavScreenKey, targetKey: NavScreenKey) => {
+    if (sourceKey === targetKey) return;
+    if (sourceKey === PINNED_NAV_SCREEN) return;
+
+    setNavOrder((currentOrder) => {
+      const nextOrder = normalizeNavOrder(currentOrder);
+      const sourceIndex = nextOrder.indexOf(sourceKey);
+      const targetIndex = nextOrder.indexOf(targetKey);
+      if (sourceIndex < 0 || targetIndex < 0) return nextOrder;
+
+      const [movedItem] = nextOrder.splice(sourceIndex, 1);
+      nextOrder.splice(targetIndex, 0, movedItem);
+      saveNavOrder(nextOrder);
+      return nextOrder;
+    });
+  }, []);
+
+  const handleNavDragStart = useCallback((event: ReactDragEvent<HTMLAnchorElement>, key: NavScreenKey) => {
+    if (key === PINNED_NAV_SCREEN) {
+      event.preventDefault();
+      return;
+    }
+
+    setDraggedNavKey(key);
+    setNavDropTarget(key);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", key);
+  }, []);
+
+  const handleNavDragOver = useCallback((event: ReactDragEvent<HTMLAnchorElement>, key: NavScreenKey) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setNavDropTarget(key);
+  }, []);
+
+  const handleNavDrop = useCallback(
+    (event: ReactDragEvent<HTMLAnchorElement>, key: NavScreenKey) => {
+      event.preventDefault();
+      const sourceKey = (event.dataTransfer.getData("text/plain") || draggedNavKey) as NavScreenKey | null;
+      if (sourceKey) {
+        moveNavItem(sourceKey, key);
+      }
+      setDraggedNavKey(null);
+      setNavDropTarget(null);
+    },
+    [draggedNavKey, moveNavItem]
+  );
+
+  const handleNavDragEnd = useCallback(() => {
+    setDraggedNavKey(null);
+    setNavDropTarget(null);
+  }, []);
 
   const startNavResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -691,26 +757,40 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
             </div>
           </div>
           <nav className="space-y-1" aria-label="주요 메뉴">
-            {navScreens.map((key) => {
+            {navOrder.map((key) => {
               const item = screenMeta[key];
               const Icon = iconMap[key];
-              const isActive = pathname === item.href || (pathname === "/" && key === "dashboard");
+              const isActive = pathname === item.href;
+              const isDragging = draggedNavKey === key;
+              const isDropTarget = navDropTarget === key && draggedNavKey !== key;
+              const isPinnedNavItem = key === PINNED_NAV_SCREEN;
               return (
                 <Link
                   key={key}
                   href={item.href}
+                  draggable={!isPinnedNavItem}
                   aria-current={isActive ? "page" : undefined}
                   title={isNavCollapsed ? item.label : undefined}
+                  onDragStart={(event) => handleNavDragStart(event, key)}
+                  onDragOver={(event) => handleNavDragOver(event, key)}
+                  onDrop={(event) => handleNavDrop(event, key)}
+                  onDragEnd={handleNavDragEnd}
                   className={`relative flex items-center rounded-lg text-sm font-semibold transition focus-ring ${
                     isNavCollapsed ? "h-11 justify-center px-0" : "justify-between px-3 py-3"
                   } ${
                     isActive ? "bg-[#f6b100] text-[#071832]" : "text-slate-700 hover:bg-[#fff8e1]"
-                  }`}
+                  } ${isDropTarget ? "ring-2 ring-[#f6b100]/50" : ""} ${isDragging ? "opacity-55" : ""}`}
                 >
                   <span className={`flex items-center ${isNavCollapsed ? "justify-center" : "gap-3"}`}>
+                    {!isNavCollapsed && !isPinnedNavItem && (
+                      <GripVertical className="h-3.5 w-3.5 flex-none cursor-grab text-slate-400" aria-hidden="true" />
+                    )}
                     <Icon className="h-4 w-4" aria-hidden="true" />
                     {!isNavCollapsed && item.label}
                   </span>
+                  {isPinnedNavItem && !isNavCollapsed && (
+                    <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-black text-[#8a6400]">고정</span>
+                  )}
                   {key === "notifications" && !isNavCollapsed && (
                     <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">3</span>
                   )}
