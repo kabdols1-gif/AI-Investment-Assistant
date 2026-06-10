@@ -1,0 +1,773 @@
+{
+	"info": {
+		"_postman_id": "0bc2f703-3afa-48ea-98b4-3d9e66013b1c",
+		"name": "0.BaaS 2.0 Dev",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "001-/baas/v2/baas_auth_issue",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"var jsonData = JSON.parse(responseBody);\r",
+							"var jbody = jsonData.dataBody;\r",
+							"\r",
+							"var code = jbody.code;\r",
+							"if (code !== undefined){\r",
+							"    postman.setGlobalVariable(\"code\",code);\r",
+							"}\r",
+							"\r",
+							"var issueNo = jbody.issueNo\r",
+							"if (issueNo !== undefined){\r",
+							"    postman.setGlobalVariable(\"issueNo\",issueNo);\r",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"dataHeader\": {\r\n        \"udId\": \"UDID\",\r\n        \"subChannel\": \"subChannel\",\r\n        \"deviceModel\": \"Android\",\r\n        \"deviceOs\": \"Android\",\r\n        \"carrier\": \"KT\",\r\n        \"connectionType\": \"..\",\r\n        \"appName\": \"..\",\r\n        \"appVersion\": \"..\",\r\n        \"hsKey\": \"body\",\r\n        \"scrNo\": \"0000\"\r\n    },\r\n    \"dataBody\": {\r\n        \"clientId\": \"{{clientId}}\",\r\n        \"ciNo\": \"{{ciNo}}\",\r\n        \"userInfo\": \"{{userInfo}}\",\r\n        \"infoType\": \"1\"\r\n    }\r\n}"
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/baas_auth_issue",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						"baas_auth_issue"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "001-/baas/v2/baas_token_issue",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"var jsonData = JSON.parse(responseBody);\r",
+							"var jbody = jsonData.dataBody;\r",
+							"\r",
+							"var access_token = jbody.access_token;\r",
+							"if (access_token !== undefined){\r",
+							"    postman.setGlobalVariable(\"access_token\",access_token);\r",
+							"}\r",
+							"\r",
+							"var refresh_token = jbody.refresh_token;\r",
+							"if (refresh_token !== undefined){\r",
+							"    postman.setGlobalVariable(\"refresh_token\",refresh_token);\r",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n \"dataHeader\" : {\r\n  \"udId\" : \"UDID\",\r\n  \"subChannel\" : \"subChannel\",\r\n  \"deviceModel\" : \"Android\",\r\n  \"deviceOs\" : \"Android\",\r\n  \"carrier\" : \"KT\",\r\n  \"connectionType\" : \"..\",\r\n  \"appName\" : \"..\",\r\n  \"appVersion\" : \"..\",\r\n  \"scrNo\" : \"0000\"  \r\n },\r\n \"dataBody\" : {\r\n  \"code\" : \"{{code}}\",\r\n  \"clientId\" : \"{{clientId}}\",\r\n  \"clientSecret\" : \"{{clientSecret}}\",\r\n  \"grantType\" :\"authorization_code\",\r\n  \"scope\" : \"public security\",\r\n  \"issueNo\" : \"{{issueNo}}\"\r\n }\r\n}"
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/baas_token_issue",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						"baas_token_issue"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "001-/baas/v2/baas_token_issue (client_credentials))",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"var jsonData = JSON.parse(responseBody);\r",
+							"var jbody = jsonData.dataBody;\r",
+							"\r",
+							"var access_token = jbody.access_token;\r",
+							"if (access_token !== undefined){\r",
+							"    postman.setGlobalVariable(\"access_token\",access_token);\r",
+							"}\r",
+							"\r",
+							"var refresh_token = jbody.refresh_token;\r",
+							"if (refresh_token !== undefined){\r",
+							"    postman.setGlobalVariable(\"refresh_token\",refresh_token);\r",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n \"dataHeader\" : {\r\n  \"udId\" : \"UDID\",\r\n  \"subChannel\" : \"subChannel\",\r\n  \"deviceModel\" : \"Android\",\r\n  \"deviceOs\" : \"Android\",\r\n  \"carrier\" : \"KT\",\r\n  \"connectionType\" : \"..\",\r\n  \"appName\" : \"..\",\r\n  \"appVersion\" : \"..\",\r\n  \"scrNo\" : \"0000\"\r\n },\r\n \"dataBody\" : {\r\n  \"clientId\" : \"{{clientId}}\",\r\n  \"clientSecret\" : \"{{clientSecret}}\",\r\n  \"grantType\" :\"client_credentials\",\r\n  \"scope\" : \"public security\"\r\n }\r\n}"
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/baas_token_issue",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						"baas_token_issue"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "001-/baas/v2/baas_token_issue (refresh)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"var jsonData = JSON.parse(responseBody);\r",
+							"var jbody = jsonData.dataBody;\r",
+							"\r",
+							"var access_token = jbody.access_token;\r",
+							"if (access_token !== undefined){\r",
+							"    postman.setGlobalVariable(\"access_token\",refresh_token);\r",
+							"}\r",
+							"\r",
+							"var refresh_token = jbody.refresh_token;\r",
+							"if (refresh_token !== undefined){\r",
+							"    postman.setGlobalVariable(\"refresh_token\",refresh_token);\r",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n \"dataHeader\" : {\r\n  \"udId\" : \"UDID\",\r\n  \"subChannel\" : \"subChannel\",\r\n  \"deviceModel\" : \"Android\",\r\n  \"deviceOs\" : \"Android\",\r\n  \"carrier\" : \"KT\",\r\n  \"connectionType\" : \"..\",\r\n  \"appName\" : \"..\",\r\n  \"appVersion\" : \"..\",\r\n  \"scrNo\" : \"0000\"\r\n },\r\n \"dataBody\" : {\r\n  \"refreshToken\" : \"{{refresh_token}}\",\r\n  \"clientId\" : \"{{clientId}}\",\r\n  \"clientSecret\" : \"{{clientSecret}}\",\r\n  \"grantType\" :\"refresh_token\",\r\n  \"scope\" : \"public security\"\r\n }\r\n}"
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/baas_token_issue",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						"baas_token_issue"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "001-/baas/v2/baas_token_revoke",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"dataHeader\": {\r\n        \"udId\": \"UDID\",\r\n        \"subChannel\": \"subChannel\",\r\n        \"deviceModel\": \"Android\",\r\n        \"deviceOs\": \"Android\",\r\n        \"carrier\": \"KT\",\r\n        \"connectionType\": \"..\",\r\n        \"appName\": \"..\",\r\n        \"appVersion\": \"..\"\r\n    },\r\n    \"dataBody\": {\r\n    \t\"token\" : \"{{access_token}}\",\r\n    \t\"clientId\" : \"{{clientId}}\",\r\n    \t\"clientSecret\" : \"{{clientSecret}}\"\r\n    }\r\n}"
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/baas_token_revoke",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						"baas_token_revoke"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "001-/baas/v2/clause_agree_process",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "",
+						"value": "",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"dataHeader\" : {\r\n      \"udId\" : \"UDID\",\r\n      \"subChannel\" : \"subChannel\",\r\n      \"deviceModel\" : \"Android\",\r\n      \"deviceOs\" : \"Android\",\r\n      \"carrier\" : \"KT\",\r\n      \"connectionType\" : \"..\",\r\n      \"appName\" : \"..\",\r\n      \"appVersion\" : \"..\",\r\n      \"hsKey\" : \"body\",\r\n      \"scrNo\" : \"0000\"\r\n    },\r\n    \"dataBody\" : {\r\n      \"clientId\" : \"{{clientId}}\",\r\n      \"ciNo\" : \"{{ciNo}}\",\r\n      \"collAgreeYn\" : \"Y\",\r\n      \"offerAgreeYn\" : \"Y\",\r\n      \"agrType\" : \"1\"\r\n    }\r\n  }\r\n"
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/clause_agree_process",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						"clause_agree_process"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "001-/baas/v2/clause_agree_process (client_credentials)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"var jsonData = JSON.parse(responseBody);\r",
+							"var jbody = jsonData.dataBody;\r",
+							"\r",
+							"var mapKey = jbody.mapKey;\r",
+							"if (mapKey !== undefined){\r",
+							"    postman.setGlobalVariable(\"mapKey\",mapKey);\r",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"dataHeader\": {\r\n        \"udId\": \"UDID\",\r\n        \"subChannel\": \"subChannel\",\r\n        \"deviceModel\": \"Android\",\r\n        \"deviceOs\": \"Android\",\r\n        \"carrier\": \"KT\",\r\n        \"connectionType\": \"..\",\r\n        \"appName\": \"..\",\r\n        \"appVersion\": \"..\",\r\n        \"hsKey\": \"body\",\r\n        \"scrNo\": \"0000\"\r\n    },\r\n    \"dataBody\": {\r\n    \t\"clientId\" : \"{{clientId}}\",\r\n    \t\"ciNo\" : \"{{ciNo}}\",\r\n    \t\"collAgreeYn\" : \"Y\",\r\n        \"offerAgreeYn\" : \"Y\",\r\n        \"agrType\" : \"1\",        \r\n        \"grantType\" :\"client_credentials\"\r\n    }\r\n}"
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/clause_agree_process",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						"clause_agree_process"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "001-/baas/v2/email_agree_process",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"dataHeader\": {\r\n        \"udId\": \"UDID\",\r\n        \"subChannel\": \"subChannel\",\r\n        \"deviceModel\": \"Android\",\r\n        \"deviceOs\": \"Android\",\r\n        \"carrier\": \"KT\",\r\n        \"connectionType\": \"..\",\r\n        \"appName\": \"..\",\r\n        \"appVersion\": \"..\",\r\n        \"hsKey\": \"body\",\r\n        \"scrNo\": \"0000\"\r\n    },\r\n    \"dataBody\": {\r\n    \t\"clientId\" : \"{{clientId}}\",\r\n    \t\"ciNo\" : \"{{ciNo}}\",\r\n    \t\"emailAgrmtF\": \"Y\",\r\n        \"agrType\": \"1\"\r\n    }\r\n}"
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/email_agree_process",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						"email_agree_process"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "002-테스트_Token",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"function decryptData(key, plainBody) {\r",
+							"  const keyBytes = CryptoJS.enc.Utf8.parse(key);\r",
+							"  const decryptedBody = CryptoJS.AES.decrypt(plainBody, keyBytes, {\r",
+							"    mode: CryptoJS.mode.ECB,\r",
+							"    padding: CryptoJS.pad.Pkcs7\r",
+							"  });\r",
+							"\r",
+							"  return decryptedBody.toString(CryptoJS.enc.Utf8);\r",
+							"}\r",
+							"\r",
+							"var jsonData = JSON.parse(responseBody);\r",
+							"var encrypt = jsonData.encrypt;\r",
+							"var decData = decryptData(postman.getGlobalVariable(\"clientSecret\"), encrypt);\r",
+							"\r",
+							"console.log(decData);\r",
+							"\r",
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function encryptData(key, plainBody) {\r",
+							"  const keyBytes = CryptoJS.enc.Utf8.parse(key);\r",
+							"  const encryptedBody = CryptoJS.AES.encrypt(plainBody, keyBytes, {\r",
+							"    mode: CryptoJS.mode.ECB,\r",
+							"    padding: CryptoJS.pad.Pkcs7\r",
+							"  });\r",
+							"\r",
+							"  return encryptedBody.toString();\r",
+							"}\r",
+							"\r",
+							"var accessToken = postman.getGlobalVariable(\"access_token\");\r",
+							"var clientSecret = postman.getGlobalVariable(\"clientSecret\")\r",
+							"\r",
+							"var reqData = request.data;\r",
+							"reqData = reqData.replace(/ /g,\"\");\r",
+							"reqData = reqData.replace(/\\n/g,\"\");\r",
+							"reqData = reqData.replace(/\\s*/g,\"\");\r",
+							"\r",
+							"var hash = CryptoJS.HmacSHA256(CryptoJS.enc.Utf8.parse(reqData), accessToken);\r",
+							"var hsKey = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(hash));\r",
+							"var encData = encryptData(clientSecret, reqData);\r",
+							"\r",
+							"postman.setGlobalVariable(\"hsKey\",hsKey);\r",
+							"\r",
+							"var sendData = \"{\\\"encrypt\\\":\\\"\" + encData + \"\\\"}\";\r",
+							"            \r",
+							"console.log(\"=======================================\");\r",
+							"console.log(\"pre accessToken ==> \" + accessToken);\r",
+							"console.log(\"pre hash        ==> \" + hash);\r",
+							"console.log(\"pre reqData     ==> \" + reqData);\r",
+							"console.log(\"pre encData     ==> \" + encData);\r",
+							"console.log(\"pre sendData    ==> \" + sendData);\r",
+							"console.log(\"=======================================\");\r",
+							"\r",
+							"pm.request.body.update(sendData);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "Authorization",
+						"value": "bearer {{access_token}}"
+					},
+					{
+						"key": "hsKey",
+						"value": "{{hsKey}}"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "002-테스트_appKey",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"function decryptData(key, plainBody) {\r",
+							"  const keyBytes = CryptoJS.enc.Utf8.parse(key);\r",
+							"  const decryptedBody = CryptoJS.AES.decrypt(plainBody, keyBytes, {\r",
+							"    mode: CryptoJS.mode.ECB,\r",
+							"    padding: CryptoJS.pad.Pkcs7\r",
+							"  });\r",
+							"\r",
+							"  return decryptedBody.toString(CryptoJS.enc.Utf8);\r",
+							"}\r",
+							"\r",
+							"var jsonData = JSON.parse(responseBody);\r",
+							"var encrypt = jsonData.encrypt;\r",
+							"var decData = decryptData(postman.getGlobalVariable(\"clientSecret\"), encrypt);\r",
+							"\r",
+							"console.log(decData);\r",
+							"\r",
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function encryptData(key, plainBody) {\r",
+							"  const keyBytes = CryptoJS.enc.Utf8.parse(key);\r",
+							"  const encryptedBody = CryptoJS.AES.encrypt(plainBody, keyBytes, {\r",
+							"    mode: CryptoJS.mode.ECB,\r",
+							"    padding: CryptoJS.pad.Pkcs7\r",
+							"  });\r",
+							"\r",
+							"  return encryptedBody.toString();\r",
+							"}\r",
+							"\r",
+							"var clientSecret = postman.getGlobalVariable(\"clientSecret\")\r",
+							"\r",
+							"var reqData = request.data;\r",
+							"reqData = reqData.replace(/ /g,\"\");\r",
+							"reqData = reqData.replace(/\\n/g,\"\");\r",
+							"reqData = reqData.replace(/\\s*/g,\"\");\r",
+							"\r",
+							"var encData = encryptData(clientSecret, reqData);\r",
+							"\r",
+							"var sendData = \"{\\\"encrypt\\\":\\\"\" + encData + \"\\\"}\";\r",
+							"            \r",
+							"console.log(\"=======================================\");\r",
+							"console.log(\"pre reqData     ==> \" + reqData);\r",
+							"console.log(\"pre encData     ==> \" + encData);\r",
+							"console.log(\"pre sendData    ==> \" + sendData);\r",
+							"console.log(\"=======================================\");\r",
+							"\r",
+							"pm.request.body.update(sendData);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "appKey",
+						"value": "{{clientId}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "002-테스트_mapKey",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"function decryptData(key, plainBody) {\r",
+							"  const keyBytes = CryptoJS.enc.Utf8.parse(key);\r",
+							"  const decryptedBody = CryptoJS.AES.decrypt(plainBody, keyBytes, {\r",
+							"    mode: CryptoJS.mode.ECB,\r",
+							"    padding: CryptoJS.pad.Pkcs7\r",
+							"  });\r",
+							"\r",
+							"  return decryptedBody.toString(CryptoJS.enc.Utf8);\r",
+							"}\r",
+							"\r",
+							"var jsonData = JSON.parse(responseBody);\r",
+							"var encrypt = jsonData.encrypt;\r",
+							"var decData = decryptData(postman.getGlobalVariable(\"clientSecret\"), encrypt);\r",
+							"\r",
+							"console.log(decData);\r",
+							"\r",
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function encryptData(key, plainBody) {\r",
+							"  const keyBytes = CryptoJS.enc.Utf8.parse(key);\r",
+							"  const encryptedBody = CryptoJS.AES.encrypt(plainBody, keyBytes, {\r",
+							"    mode: CryptoJS.mode.ECB,\r",
+							"    padding: CryptoJS.pad.Pkcs7\r",
+							"  });\r",
+							"\r",
+							"  return encryptedBody.toString();\r",
+							"}\r",
+							"\r",
+							"var accessToken = postman.getGlobalVariable(\"access_token\");\r",
+							"var clientSecret = postman.getGlobalVariable(\"clientSecret\")\r",
+							"\r",
+							"var reqData = request.data;\r",
+							"reqData = reqData.replace(/ /g,\"\");\r",
+							"reqData = reqData.replace(/\\n/g,\"\");\r",
+							"reqData = reqData.replace(/\\s*/g,\"\");\r",
+							"\r",
+							"var hash = CryptoJS.HmacSHA256(CryptoJS.enc.Utf8.parse(reqData), accessToken);\r",
+							"var hsKey = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(hash));\r",
+							"var encData = encryptData(clientSecret, reqData);\r",
+							"\r",
+							"postman.setGlobalVariable(\"hsKey\",hsKey);\r",
+							"\r",
+							"var sendData = \"{\\\"encrypt\\\":\\\"\" + encData + \"\\\"}\";\r",
+							"            \r",
+							"console.log(\"=======================================\");\r",
+							"console.log(\"pre accessToken ==> \" + accessToken);\r",
+							"console.log(\"pre hash        ==> \" + hash);\r",
+							"console.log(\"pre reqData     ==> \" + reqData);\r",
+							"console.log(\"pre encData     ==> \" + encData);\r",
+							"console.log(\"pre sendData    ==> \" + sendData);\r",
+							"console.log(\"=======================================\");\r",
+							"\r",
+							"pm.request.body.update(sendData);"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "Authorization",
+						"value": "bearer {{access_token}}"
+					},
+					{
+						"key": "mapKey",
+						"value": "{{mapKey}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "https://dbaasapi.kbsec.com:32484/baas/v2/",
+					"protocol": "https",
+					"host": [
+						"dbaasapi",
+						"kbsec",
+						"com"
+					],
+					"port": "32484",
+					"path": [
+						"baas",
+						"v2",
+						""
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "kb-openapi-tester",
+  "version": "1.0.0",
+  "private": true,
+  "description": "KB OpenAPI sample tester with a lightweight UI and CLI flow for SSQM2952.",
+  "type": "commonjs",
+  "scripts": {
+    "run:kb:ssqm2952": "node scripts/run-ssqm2952.js",
+    "ui": "node server.js"
+  }
+}

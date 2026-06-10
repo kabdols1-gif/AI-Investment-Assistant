@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KB SSQM2952 Test UI</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    body {
+      margin: 0;
+      background: #f7f8fb;
+      color: #1f2933;
+      padding: 24px;
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #dde3ee;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+    input, select, textarea, button {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px;
+      border: 1px solid #d4dae5;
+      border-radius: 6px;
+      background: #fff;
+      font-size: 14px;
+    }
+    textarea {
+      min-height: 220px;
+      font-family: Consolas, "Courier New", monospace;
+      resize: vertical;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    button {
+      background: #2f59d8;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .btn-secondary {
+      background: #5c6f88;
+    }
+    .status {
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    .muted {
+      color: #556;
+      font-size: 12px;
+    }
+    pre {
+      margin: 0;
+      background: #111827;
+      color: #f8fafc;
+      padding: 12px;
+      border-radius: 6px;
+      overflow: auto;
+      font-size: 12px;
+      max-height: 360px;
+    }
+    .step {
+      border-left: 3px solid #9aa9c7;
+      padding: 8px 10px;
+      margin-top: 8px;
+      background: #f8f9fb;
+      border-radius: 4px;
+    }
+    .step h3 {
+      margin: 0 0 6px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>KB SSQM2952 Test UI</h1>
+    <p class="muted">
+      Enter credentials and payload directly, then run the API in one click.
+    </p>
+
+    <section class="panel">
+      <h2>Input</h2>
+      <div class="grid">
+        <div>
+          <label for="clientId">clientId</label>
+          <input id="clientId" placeholder="BShQYu...">
+        </div>
+        <div>
+          <label for="clientSecret">clientSecret</label>
+          <input id="clientSecret" type="password" placeholder="8M2U7...">
+        </div>
+        <div>
+          <label for="ciNo">ciNo</label>
+          <input id="ciNo" placeholder="7JByh2...">
+        </div>
+        <div>
+          <label for="userInfo">userInfo</label>
+          <input id="userInfo" placeholder="mEYhBy...">
+        </div>
+        <div>
+          <label for="infoType">infoType</label>
+          <select id="infoType">
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
+          </select>
+        </div>
+        <div>
+          <label for="baseUrl">baseUrl</label>
+          <input id="baseUrl" value="https://dbaasapi.kbsec.com:32484">
+        </div>
+        <div>
+          <label for="timeoutMs">Timeout (ms)</label>
+          <input id="timeoutMs" type="number" value="20000">
+        </div>
+        <div>
+          <label for="specPath">specPath (optional)</label>
+          <input id="specPath" value="broker-specs/kbsec/SSQM2952.json">
+        </div>
+      </div>
+
+      <div style="margin-top: 12px;">
+        <label for="payload">Payload JSON (dataHeader / dataBody)</label>
+        <textarea id="payload">{
+  "dataHeader": {
+    "udId": "UDID",
+    "subChannel": "subChannel",
+    "deviceModel": "Web",
+    "deviceOs": "Windows",
+    "carrier": "KB",
+    "connectionType": "..",
+    "appName": "SSQM2952-Test",
+    "appVersion": "1.0.0",
+    "hsKey": "body",
+    "scrNo": "0000"
+  },
+  "dataBody": {
+    "trId": "SSQM2952",
+    "accountNo": "",
+    "inquiryDate": "YYYYMMDD"
+  }
+}</textarea>
+      </div>
+
+      <div class="actions">
+        <button id="runBtn">Run SSQM2952</button>
+        <button id="sampleBtn" class="btn-secondary" type="button">Load sample template</button>
+      </div>
+      <p id="status" class="status muted"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Result</h2>
+      <div id="result"></div>
+    </section>
+  </div>
+
+  <script>
+    const form = {
+      clientId: document.getElementById("clientId"),
+      clientSecret: document.getElementById("clientSecret"),
+      ciNo: document.getElementById("ciNo"),
+      userInfo: document.getElementById("userInfo"),
+      infoType: document.getElementById("infoType"),
+      baseUrl: document.getElementById("baseUrl"),
+      timeoutMs: document.getElementById("timeoutMs"),
+      payload: document.getElementById("payload"),
+      specPath: document.getElementById("specPath"),
+      status: document.getElementById("status"),
+      result: document.getElementById("result"),
+      runBtn: document.getElementById("runBtn"),
+      sampleBtn: document.getElementById("sampleBtn"),
+    };
+
+    function setStatus(text, isError = false) {
+      form.status.textContent = text;
+      form.status.style.color = isError ? "#b91c1c" : "#475569";
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function renderSteps(steps) {
+      if (!Array.isArray(steps)) return "";
+      return steps
+        .map((s) => {
+          const body = escapeHtml(JSON.stringify(s.response || s, null, 2));
+          return `<div class=\"step\">\n          <h3>${s.step}</h3>\n          <pre>${body}</pre>\n        </div>`;
+        })
+        .join("");
+    }
+
+    function hasValue(v) {
+      return typeof v === "string" && v.trim().length > 0;
+    }
+
+    async function runTest() {
+      form.runBtn.disabled = true;
+      setStatus("Running...");
+      form.result.innerHTML = "";
+
+      if (!hasValue(form.clientId.value) || !hasValue(form.clientSecret.value) || !hasValue(form.ciNo.value) || !hasValue(form.userInfo.value)) {
+        setStatus("clientId, clientSecret, ciNo, userInfo are required.", true);
+        form.runBtn.disabled = false;
+        return;
+      }
+
+      let payloadParsed;
+      try {
+        payloadParsed = JSON.parse(form.payload.value);
+      } catch (err) {
+        setStatus("payload JSON is invalid.", true);
+        form.runBtn.disabled = false;
+        return;
+      }
+
+      const request = {
+        clientId: form.clientId.value.trim(),
+        clientSecret: form.clientSecret.value.trim(),
+        ciNo: form.ciNo.value.trim(),
+        userInfo: form.userInfo.value.trim(),
+        infoType: form.infoType.value,
+        baseUrl: form.baseUrl.value.trim(),
+        timeoutMs: Number(form.timeoutMs.value),
+        specPath: form.specPath.value.trim(),
+        payload: payloadParsed,
+      };
+
+      try {
+        const resp = await fetch("/api/run-ssqm2952", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+        });
+
+        const json = await resp.json();
+        if (!resp.ok || !json.ok) {
+          throw new Error(json.error || `HTTP ${resp.status}`);
+        }
+
+        const result = json.result;
+        setStatus("Completed");
+        form.result.innerHTML = `
+          <div class="step"><h3>Final result</h3><pre>${escapeHtml(JSON.stringify(result.final, null, 2))}</pre></div>
+          <div class="step"><h3>Step results</h3>${renderSteps(result.steps)}</div>
+        `;
+      } catch (err) {
+        setStatus(`Run failed: ${err.message}`, true);
+      } finally {
+        form.runBtn.disabled = false;
+      }
+    }
+
+  async function loadDefaultPayload() {
+      form.sampleBtn.disabled = true;
+      setStatus("Loading sample template...");
+      try {
+        const pathQuery = encodeURIComponent(form.specPath.value.trim() || "broker-specs/kbsec/SSQM2952.json");
+        const r = await fetch(`/api/spec/default?path=${pathQuery}`);
+        const data = await r.json();
+        if (data && data.ok && data.template) {
+          form.payload.value = JSON.stringify(data.template, null, 2);
+          setStatus("Sample template loaded.");
+        } else {
+          throw new Error("Failed to load template.");
+        }
+      } catch (err) {
+        setStatus(`Failed to load template: ${err.message}`, true);
+      } finally {
+        form.sampleBtn.disabled = false;
+      }
+    }
+
+    form.runBtn.addEventListener("click", runTest);
+    form.sampleBtn.addEventListener("click", loadDefaultPayload);
+  </script>
+</body>
+</html>

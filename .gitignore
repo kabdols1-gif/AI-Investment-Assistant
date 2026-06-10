@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Python
 __pycache__/
 *.py[cod]
@@ -66,3 +67,16 @@ node_modules/
 
 # uv
 .python-version
+
+# Project-specific (KB OpenAPI tester)
+/tmp/
+/node_modules/
+/.env
+/tmp_payload.json
+=======
+/node_modules/
+/tmp/
+/.env
+/.idea/
+/*.log
+>>>>>>> a7b88d7 (feat: add KB SSQM2952 UI tester with spec-driven flow)

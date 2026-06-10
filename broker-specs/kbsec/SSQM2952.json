@@ -1,0 +1,39 @@
+{
+  "broker": "KB Securities",
+  "brokerId": "kbsec",
+  "serviceCode": "SSQM2952",
+  "serviceName": "Account Asset Valuation",
+  "path": "/baas/v2/",
+  "authMode": "mapKey",
+  "requires": {
+    "authIssue": true,
+    "tokenIssue": "authorization_code",
+    "clauseAgree": {
+      "needClientCredentials": true
+    }
+  },
+  "requestTemplate": {
+    "dataHeader": {
+      "udId": "UDID",
+      "subChannel": "subChannel",
+      "deviceModel": "Node.js",
+      "deviceOs": "Node.js",
+      "carrier": "KB",
+      "connectionType": "..",
+      "appName": "SSQM2952-Test",
+      "appVersion": "1.0.0",
+      "hsKey": "body",
+      "scrNo": "0000"
+    },
+    "dataBody": {
+      "trId": "SSQM2952"
+    }
+  },
+  "requiredPlaceholders": [
+    "dataBody.accountNo"
+  ],
+  "notes": [
+    "This template is based on KB BaaS 2.0 public sample structure.",
+    "Use your own accountNo and inquiryDate in dataBody when calling SSQM2952."
+  ]
+}
