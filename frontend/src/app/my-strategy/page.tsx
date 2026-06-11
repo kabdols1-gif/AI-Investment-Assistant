@@ -3,6 +3,13 @@
 import { Activity, BarChart3, Bell, PauseCircle, Pencil, PlayCircle, Plus, Save, Search, ShieldCheck, Trash2, X } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout";
+import {
+  StrategyExecutionConfigurator,
+  cloneBuilderState,
+  createDefaultExecutionConfig,
+  getExecutionSummary,
+  type StrategyExecutionConfig,
+} from "@/components/strategy/StrategyExecutionConfigurator";
 import { useToast } from "@/components/ui";
 import { myStrategies } from "@/lib/mockData";
 
@@ -25,6 +32,7 @@ type StrategyItem = (typeof myStrategies)[number] & {
   description: string;
   composition: StrategyHolding[];
   alerts: number;
+  execution: StrategyExecutionConfig;
 };
 
 type StrategyDraft = {
@@ -41,6 +49,7 @@ type StrategyDraft = {
   volatilityAlert: number;
   checkCycle: string;
   alertMethod: string;
+  execution: StrategyExecutionConfig;
 };
 type StrategyWizardMode = "create" | "edit";
 
@@ -76,6 +85,10 @@ const initialStrategies: StrategyItem[] = myStrategies.map((strategy, index) => 
             { name: "현금성", ticker: "CASH", price: "-", weight: 45 },
           ],
   alerts: index === 1 ? 1 : 0,
+  execution: createDefaultExecutionConfig(
+    "basic",
+    index === 0 ? "mean_reversion" : index === 1 ? "golden_cross" : "disparity"
+  ),
 }));
 
 const filterLabels: StrategyStatusFilter[] = ["전체 전략", "실행중", "중지", "알림 필요"];
@@ -162,6 +175,15 @@ export default function MyStrategyPage() {
     if (!nextName) {
       toast.warning("전략명을 입력해 주세요.");
       setActiveStep(0);
+      return;
+    }
+    const executionSummary = getExecutionSummary(draft.execution);
+    if (
+      draft.execution.mode === "expert" &&
+      (executionSummary.indicatorCount === 0 || executionSummary.entryCount === 0 || executionSummary.exitCount === 0)
+    ) {
+      toast.warning("전문가모드는 지표, 진입 조건, 청산 조건을 모두 설정해 주세요.");
+      setActiveStep(2);
       return;
     }
     const normalizedDraft = {
@@ -320,6 +342,7 @@ function StrategyWizard({
 }) {
   const totalWeight = draft.holdings.reduce((sum, item) => sum + item.weight, 0);
   const isEditMode = mode === "edit";
+  const executionSummary = getExecutionSummary(draft.execution);
 
   const updateHolding = (index: number, patch: Partial<StrategyHolding>) => {
     onDraftChange({
@@ -468,6 +491,10 @@ function StrategyWizard({
           {activeStep === 2 && (
             <div className="space-y-4">
               <SectionTitle step="3단계" title="실행 조건" />
+              <StrategyExecutionConfigurator
+                value={draft.execution}
+                onChange={(execution) => onDraftChange({ ...draft, execution })}
+              />
               <CheckOption label={`목표 비중 대비 ±${draft.rebalanceGap}% 이상 차이 발생 시 알림`} checked onChange={(checked) => checked && onDraftChange({ ...draft })} />
               <NumberField label="수익률 알림 조건" prefix="+" suffix="% 도달 시 알림" value={draft.profitAlert} onChange={(value) => onDraftChange({ ...draft, profitAlert: value })} />
               <NumberField label="손실률 알림 조건" prefix="-" suffix="% 도달 시 알림" value={draft.lossAlert} onChange={(value) => onDraftChange({ ...draft, lossAlert: value })} />
@@ -489,6 +516,10 @@ function StrategyWizard({
                   ["전략 유형", draft.strategyType],
                   ["투자 성향", draft.profile],
                   ["구성 종목 및 비중", draft.holdings.map((item) => `${item.name} ${item.weight}%`).join(" · ") || "-"],
+                  ["실행 모드", executionSummary.modeLabel],
+                  ["기본 전략", executionSummary.presetName],
+                  ["전문가 설정", `지표 ${executionSummary.indicatorCount}개 · 진입 ${executionSummary.entryCount}개 · 청산 ${executionSummary.exitCount}개`],
+                  ["리스크", executionSummary.riskSummary],
                   ["리밸런싱 기준", `목표 비중 대비 ±${draft.rebalanceGap}% 이상 차이 발생 시 알림`],
                   ["수익률 알림 조건", `+${draft.profitAlert}% 도달 시 알림`],
                   ["손실률 알림 조건", `-${draft.lossAlert}% 도달 시 알림`],
@@ -527,6 +558,10 @@ function StrategyWizard({
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <h3 className="text-sm font-extrabold text-[#071832]">조건 요약</h3>
             <ul className="mt-3 space-y-2 text-sm font-semibold leading-6 text-slate-600">
+              <li>모드: {executionSummary.modeLabel}</li>
+              <li>기본 전략: {executionSummary.presetName}</li>
+              <li>전문가 조건: 지표 {executionSummary.indicatorCount}개 · 진입 {executionSummary.entryCount}개 · 청산 {executionSummary.exitCount}개</li>
+              <li>리스크: {executionSummary.riskSummary}</li>
               <li>리밸런싱: ±{draft.rebalanceGap}%</li>
               <li>수익 알림: +{draft.profitAlert}%</li>
               <li>손실 알림: -{draft.lossAlert}%</li>
@@ -576,6 +611,7 @@ function StrategyInsightPanel({
   onEdit: (strategy?: StrategyItem) => void;
 }) {
   const allocation = strategy?.composition ?? [];
+  const executionSummary = strategy ? getExecutionSummary(strategy.execution) : null;
 
   return (
     <aside className="space-y-5">
@@ -614,6 +650,8 @@ function StrategyInsightPanel({
               <Metric label="위험도" value={strategy.risk} />
               <Metric label="유형" value={strategy.strategyType} />
               <Metric label="운용" value={strategy.operationMode} />
+              <Metric label="실행모드" value={executionSummary?.modeLabel ?? "-"} />
+              <Metric label="기본전략" value={executionSummary?.presetName ?? "-"} />
             </div>
             <div className="mt-5">
               <p className="text-sm font-extrabold text-[#071832]">구성 비중</p>
@@ -786,6 +824,7 @@ function createEmptyDraft(): StrategyDraft {
     volatilityAlert: 3,
     checkCycle: "매일 (장 마감 후)",
     alertMethod: "앱 알림 + AI 코멘트",
+    execution: createDefaultExecutionConfig("basic", "golden_cross"),
   };
 }
 
@@ -805,6 +844,9 @@ function createDraftFromStrategy(strategy?: StrategyItem): StrategyDraft {
     volatilityAlert: 3,
     checkCycle: "매일 (장 마감 후)",
     alertMethod: "앱 알림 + AI 코멘트",
+    execution: strategy.execution
+      ? { ...strategy.execution, builderState: cloneBuilderState(strategy.execution.builderState) }
+      : createDefaultExecutionConfig("basic", "golden_cross"),
   };
 }
 
@@ -831,6 +873,7 @@ function createStrategyFromDraft(draft: StrategyDraft, previous?: StrategyItem):
     description: draft.description,
     composition: draft.holdings,
     alerts: draft.alertMethod.includes("알림") ? 1 : 0,
+    execution: { ...draft.execution, builderState: cloneBuilderState(draft.execution.builderState) },
   };
 }
 
