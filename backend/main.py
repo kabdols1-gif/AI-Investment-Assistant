@@ -4,6 +4,7 @@ Strategy Builder - FastAPI Backend
 
 import os
 import sys
+from contextlib import asynccontextmanager
 
 # 프로젝트 루트를 path에 추가
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -13,12 +14,24 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routers import account, actions, auth, broker, config, files, market, orders, strategy, symbols, voice
+from backend.services.symbol_scheduler import start_symbol_scheduler, stop_symbol_scheduler
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """애플리케이션 시작/종료 수명주기."""
+    await start_symbol_scheduler()
+    try:
+        yield
+    finally:
+        await stop_symbol_scheduler()
 
 # FastAPI 앱 생성
 app = FastAPI(
     title="Strategy Builder",
     description="AI trading strategy builder",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS 설정

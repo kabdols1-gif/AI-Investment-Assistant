@@ -5,7 +5,7 @@
  */
 
 import { apiGet, apiPost } from "./client";
-import type { Symbol, SymbolSearchResponse, MasterStatus, CollectResult } from "@/types/symbols";
+import type { Symbol, SymbolExchange, SymbolSearchResponse, MasterStatus, CollectResult } from "@/types/symbols";
 
 interface SymbolDetailResponse {
   status: string;
@@ -22,7 +22,7 @@ interface SymbolDetailResponse {
 export async function searchSymbols(
   query: string,
   limit: number = 20,
-  exchange?: "kospi" | "kosdaq"
+  exchange?: SymbolExchange
 ): Promise<SymbolSearchResponse> {
   const params = new URLSearchParams({
     q: query,
@@ -56,6 +56,7 @@ export async function getMasterStatus(): Promise<MasterStatus> {
 /**
  * 마스터파일 수집 (다운로드 및 저장)
  */
-export async function collectMasterFiles(): Promise<CollectResult> {
-  return apiPost<CollectResult>("/api/symbols/collect");
+export async function collectMasterFiles(market?: "all" | "domestic" | "overseas" | SymbolExchange): Promise<CollectResult> {
+  const query = market ? `?market=${encodeURIComponent(market)}` : "";
+  return apiPost<CollectResult>(`/api/symbols/collect${query}`);
 }

@@ -42,6 +42,10 @@ ENV/
 # KIS
 /.master/
 /KIS/
+master/*/raw/*
+master/*/parsed/*
+!master/*/raw/.gitkeep
+!master/*/parsed/.gitkeep
 
 # Logs
 *.log
