@@ -71,7 +71,7 @@ export default function NotificationsPage() {
         <Summary label="시스템" value={`${sampleNotifications.filter((item) => item.type === "시스템").length}건`} />
       </section>
 
-      <section className="mt-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="mt-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap gap-2">
             {tabs.map((tab) => (
@@ -80,7 +80,9 @@ export default function NotificationsPage() {
                 type="button"
                 onClick={() => setActiveTab(tab)}
                 className={`rounded-full px-3 py-2 text-sm font-bold transition focus-ring ${
-                  tab === activeTab ? "bg-[#071832] text-white" : "bg-[#f8fafc] text-slate-600 hover:bg-[#fff8e1]"
+                  tab === activeTab
+                    ? "bg-[#071832] text-white dark:bg-amber-400 dark:text-slate-950"
+                    : "bg-[#f8fafc] text-slate-600 hover:bg-[#fff8e1] dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                 }`}
                 aria-pressed={tab === activeTab}
               >
@@ -95,12 +97,12 @@ export default function NotificationsPage() {
                 setReadIds(sampleNotifications.map((item) => item.id));
                 toast.success("모든 알림을 읽음 처리했습니다.");
               }}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 focus-ring"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 focus-ring dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
             >
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
               모두 읽음 처리
             </button>
-            <Link href="/my-settings" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 focus-ring">
+            <Link href="/my-settings" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 focus-ring dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
               <Settings className="h-4 w-4" aria-hidden="true" />
               알림 설정
             </Link>
@@ -114,23 +116,27 @@ export default function NotificationsPage() {
               <article
                 key={item.id}
                 onClick={() => openDetail(item)}
-                className={`cursor-pointer rounded-lg border p-4 shadow-sm transition hover:border-[#f3d58a] ${isRead ? "border-slate-100 bg-white" : "border-[#f3d58a] bg-[#fffdfa]"}`}
+                className={`cursor-pointer rounded-lg border p-4 shadow-sm transition hover:border-[#f3d58a] dark:hover:border-[#f6b100] ${
+                  isRead
+                    ? "border-slate-100 bg-white dark:border-slate-700 dark:bg-slate-900"
+                    : "border-[#f3d58a] bg-[#fffdfa] dark:border-amber-400/70 dark:bg-amber-500/10"
+                }`}
               >
                 <div className="grid gap-3 lg:grid-cols-[48px_1fr_auto] lg:items-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#eef6ff] text-[#0f4c81]">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#eef6ff] text-[#0f4c81] dark:bg-sky-900/30 dark:text-sky-300">
                     <NotificationIcon type={item.type} />
                   </div>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-extrabold text-[#071832]">{item.title}</p>
-                      {!isRead && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-600">안읽음</span>}
-                      <span className="rounded-full bg-[#f8fafc] px-2 py-0.5 text-[11px] font-bold text-slate-600">{item.type}</span>
-                      <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                      <p className="text-sm font-extrabold text-[#071832] dark:text-white">{item.title}</p>
+                      {!isRead && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-600 dark:bg-red-900/30 dark:text-red-300">안읽음</span>}
+                      <span className="rounded-full bg-[#f8fafc] px-2 py-0.5 text-[11px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{item.type}</span>
+                      <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                         <Clock className="h-3 w-3" aria-hidden="true" />
                         {item.time}
                       </span>
                     </div>
-                    <p className="mt-1 text-sm leading-5 text-slate-600">{item.message}</p>
+                    <p className="mt-1 text-sm leading-5 text-slate-600 dark:text-slate-300">{item.message}</p>
                   </div>
                   <button
                     type="button"
@@ -138,7 +144,7 @@ export default function NotificationsPage() {
                       event.stopPropagation();
                       openDetail(item);
                     }}
-                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 focus-ring"
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 focus-ring dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                   >
                     <Eye className="h-4 w-4" aria-hidden="true" />
                     상세보기
@@ -157,10 +163,10 @@ export default function NotificationsPage() {
 
 function Summary({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <Bell className="h-5 w-5 text-[#8a6400]" aria-hidden="true" />
-      <p className="mt-3 text-xs text-slate-500">{label}</p>
-      <p className="mt-1 text-xl font-extrabold text-[#071832]">{value}</p>
+      <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-1 text-xl font-extrabold text-[#071832] dark:text-white">{value}</p>
     </div>
   );
 }
@@ -168,21 +174,21 @@ function Summary({ label, value }: { label: string; value: string }) {
 function NotificationDetailModal({ item, onClose }: { item: NotificationItem; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/40 px-4 py-6">
-      <section className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-5 shadow-2xl">
+      <section className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-extrabold text-[#8a6400]">{item.type}</p>
-            <h2 className="mt-2 text-xl font-black tracking-normal text-[#071832]">{item.title}</h2>
+            <h2 className="mt-2 text-xl font-black tracking-normal text-[#071832] dark:text-white">{item.title}</h2>
           </div>
-          <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 focus-ring" aria-label="알림 상세 닫기">
+          <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 focus-ring dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" aria-label="알림 상세 닫기">
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
-        <p className="mt-4 rounded-lg bg-[#f8fafc] p-4 text-sm leading-6 text-slate-700">{item.message}</p>
+        <p className="mt-4 rounded-lg bg-[#f8fafc] p-4 text-sm leading-6 text-slate-700 dark:bg-slate-800 dark:text-slate-200">{item.message}</p>
         {item.detail && (
-          <div className="mt-4 rounded-lg border border-slate-100 p-4">
-            <p className="text-sm font-extrabold text-[#071832]">상세 내용</p>
-            <ul className="mt-3 space-y-2 text-sm text-slate-600">
+          <div className="mt-4 rounded-lg border border-slate-100 p-4 dark:border-slate-700">
+            <p className="text-sm font-extrabold text-[#071832] dark:text-white">상세 내용</p>
+            <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
               {item.detail.map((detail) => (
                 <li key={detail}>- {detail}</li>
               ))}
@@ -190,10 +196,10 @@ function NotificationDetailModal({ item, onClose }: { item: NotificationItem; on
           </div>
         )}
         <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <Link href={item.type === "전략" ? "/my-strategy" : item.type === "시스템" ? "/settings" : "/assets"} className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-extrabold text-[#071832] hover:bg-slate-50 focus-ring">
+          <Link href={item.type === "전략" ? "/my-strategy" : item.type === "시스템" ? "/settings" : "/assets"} className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-extrabold text-[#071832] hover:bg-slate-50 focus-ring dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:hover:bg-slate-800">
             관련 화면 보기
           </Link>
-          <button type="button" onClick={onClose} className="inline-flex h-10 items-center rounded-lg bg-[#071832] px-4 text-sm font-extrabold text-white hover:bg-[#102642] focus-ring">
+          <button type="button" onClick={onClose} className="inline-flex h-10 items-center rounded-lg bg-[#071832] px-4 text-sm font-extrabold text-white hover:bg-[#102642] focus-ring dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">
             닫기
           </button>
         </div>

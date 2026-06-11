@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3, ChevronRight, Globe2, Star } from "lucide-react";
+import { BarChart3, ChevronRight, Coins, DollarSign, Droplet, Flag, Fuel, Globe2, Landmark, Star, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/layout";
 import type { MarketTone } from "@/lib/mockData";
 
 type MarketTab = "domestic" | "us" | "global" | "indicators";
+type ThemeMetric = "rate" | "volume" | "tradingValue";
 type MarketRow = {
   name: string;
   code?: string;
@@ -17,12 +18,24 @@ type MarketRow = {
   marketCap: string;
   tone: MarketTone;
 };
+type IndicatorIconKind = "country" | "centralBank" | "oil" | "fuel" | "gold" | "silver" | "copper";
+type IndicatorRow = {
+  name: string;
+  value: string;
+  change: string;
+  time: string;
+  tone: MarketTone;
+  icon: {
+    kind: IndicatorIconKind;
+    label: string;
+  };
+};
 
-const tabs: { id: MarketTab; label: string }[] = [
-  { id: "domestic", label: "국내" },
-  { id: "us", label: "미국" },
-  { id: "global", label: "글로벌" },
-  { id: "indicators", label: "시장지표" },
+const tabs: { id: MarketTab; label: string; icon: LucideIcon }[] = [
+  { id: "domestic", label: "국내", icon: Landmark },
+  { id: "us", label: "미국", icon: DollarSign },
+  { id: "global", label: "글로벌", icon: Globe2 },
+  { id: "indicators", label: "시장지표", icon: BarChart3 },
 ];
 
 const intradayLabels = [
@@ -120,48 +133,162 @@ const indicatorGroups = [
   {
     title: "국채수익률",
     rows: [
-      ["미국 국채 10년", "4.5680", "▲ 0.0320 (+0.71%)", "실시간", "up"],
-      ["한국 국채 10년", "4.3270", "▲ 0.0840 (+1.98%)", "실시간", "up"],
-      ["일본 국채 10년", "2.6580", "▼ 0.0100 (-0.37%)", "2시간 지연", "down"],
-      ["독일 국채 10년", "3.0270", "▼ 0.0120 (-0.39%)", "실시간", "down"],
+      { name: "미국 국채 10년", value: "4.5680", change: "▲ 0.0320 (+0.71%)", time: "실시간", tone: "up", icon: { kind: "country", label: "US" } },
+      { name: "한국 국채 10년", value: "4.3270", change: "▲ 0.0840 (+1.98%)", time: "실시간", tone: "up", icon: { kind: "country", label: "KR" } },
+      { name: "일본 국채 10년", value: "2.6580", change: "▼ 0.0100 (-0.37%)", time: "2시간 지연", tone: "down", icon: { kind: "country", label: "JP" } },
+      { name: "독일 국채 10년", value: "3.0270", change: "▼ 0.0120 (-0.39%)", time: "실시간", tone: "down", icon: { kind: "country", label: "DE" } },
     ],
   },
   {
     title: "기준금리",
     rows: [
-      ["미국연방준비은행", "3.75%", "0.00", "04.30", "neutral"],
-      ["한국은행", "2.50%", "0.00", "05.28", "neutral"],
-      ["유럽중앙은행", "2.15%", "0.00", "04.30", "neutral"],
-      ["일본은행", "0.75%", "0.00", "04.28", "neutral"],
+      { name: "미국연방준비은행", value: "3.75%", change: "0.00", time: "04.30", tone: "neutral", icon: { kind: "centralBank", label: "FED" } },
+      { name: "한국은행", value: "2.50%", change: "0.00", time: "05.28", tone: "neutral", icon: { kind: "centralBank", label: "BOK" } },
+      { name: "유럽중앙은행", value: "2.15%", change: "0.00", time: "04.30", tone: "neutral", icon: { kind: "centralBank", label: "ECB" } },
+      { name: "일본은행", value: "0.75%", change: "0.00", time: "04.28", tone: "neutral", icon: { kind: "centralBank", label: "BOJ" } },
     ],
   },
   {
     title: "에너지",
     rows: [
-      ["WTI", "94.14", "▲ 3.60 (+3.98%)", "10분 지연", "up"],
-      ["브렌트유", "96.56", "▲ 3.47 (+3.73%)", "10분 지연", "up"],
-      ["RBOB 가솔린", "3.0719", "▲ 0.0851 (+2.85%)", "10분 지연", "up"],
-      ["두바이유", "90.46", "▼ 2.68 (-2.88%)", "10분 지연", "down"],
+      { name: "WTI", value: "94.14", change: "▲ 3.60 (+3.98%)", time: "10분 지연", tone: "up", icon: { kind: "oil", label: "Oil" } },
+      { name: "브렌트유", value: "96.56", change: "▲ 3.47 (+3.73%)", time: "10분 지연", tone: "up", icon: { kind: "oil", label: "Oil" } },
+      { name: "RBOB 가솔린", value: "3.0719", change: "▲ 0.0851 (+2.85%)", time: "10분 지연", tone: "up", icon: { kind: "fuel", label: "Gas" } },
+      { name: "두바이유", value: "90.46", change: "▼ 2.68 (-2.88%)", time: "10분 지연", tone: "down", icon: { kind: "oil", label: "Oil" } },
     ],
   },
   {
     title: "금속",
     rows: [
-      ["국제 금", "4,342.90", "▼ 22.40 (-0.51%)", "10분 지연", "down"],
-      ["국내 금", "213,970", "▼ 4,580 (-2.10%)", "실시간", "down"],
-      ["은", "67.57", "▼ 1.53 (-2.22%)", "10분 지연", "down"],
-      ["구리(선물)", "6.2665", "▼ 0.0180 (-0.29%)", "10분 지연", "down"],
+      { name: "국제 금", value: "4,342.90", change: "▼ 22.40 (-0.51%)", time: "10분 지연", tone: "down", icon: { kind: "gold", label: "Au" } },
+      { name: "국내 금", value: "213,970", change: "▼ 4,580 (-2.10%)", time: "실시간", tone: "down", icon: { kind: "gold", label: "Au" } },
+      { name: "은", value: "67.57", change: "▼ 1.53 (-2.22%)", time: "10분 지연", tone: "down", icon: { kind: "silver", label: "Ag" } },
+      { name: "구리(선물)", value: "6.2665", change: "▼ 0.0180 (-0.29%)", time: "10분 지연", tone: "down", icon: { kind: "copper", label: "Cu" } },
     ],
+  },
+] satisfies { title: string; rows: IndicatorRow[] }[];
+
+const themeMetricLabels: { id: ThemeMetric; label: string }[] = [
+  { id: "rate", label: "상승률" },
+  { id: "volume", label: "거래량" },
+  { id: "tradingValue", label: "거래대금" },
+];
+
+const themeTopGroups: Record<
+  ThemeMetric,
+  {
+    industry: { name: string; value: string; tone: MarketTone; magnitude: number; hot?: boolean }[];
+    theme: { name: string; value: string; tone: MarketTone; magnitude: number; hot?: boolean }[];
+  }
+> = {
+  rate: {
+    industry: [
+      { name: "무선통신서비스", value: "+0.76%", tone: "up", magnitude: 0.76, hot: true },
+      { name: "가정용품", value: "-1.05%", tone: "down", magnitude: -1.05 },
+      { name: "운송인프라", value: "-1.61%", tone: "down", magnitude: -1.61 },
+      { name: "광고", value: "-2.02%", tone: "down", magnitude: -2.02 },
+      { name: "담배", value: "-2.23%", tone: "down", magnitude: -2.23 },
+    ],
+    theme: [
+      { name: "기업인수목적회사", value: "-0.31%", tone: "down", magnitude: -0.31, hot: true },
+      { name: "통신", value: "-1.45%", tone: "down", magnitude: -1.45 },
+      { name: "국내 상장 중국기업", value: "-1.61%", tone: "down", magnitude: -1.61 },
+      { name: "마켓컬리(Kurly)", value: "-1.72%", tone: "down", magnitude: -1.72 },
+      { name: "리츠(REITs)", value: "-2.70%", tone: "down", magnitude: -2.7 },
+    ],
+  },
+  volume: {
+    industry: [
+      { name: "반도체와반도체장비", value: "8,942만주", tone: "neutral", magnitude: 8942, hot: true },
+      { name: "자동차", value: "6,314만주", tone: "neutral", magnitude: 6314 },
+      { name: "은행", value: "5,986만주", tone: "neutral", magnitude: 5986 },
+      { name: "전자장비와기기", value: "4,732만주", tone: "neutral", magnitude: 4732 },
+      { name: "제약", value: "3,948만주", tone: "neutral", magnitude: 3948 },
+    ],
+    theme: [
+      { name: "AI 반도체", value: "1.24억주", tone: "neutral", magnitude: 12400, hot: true },
+      { name: "2차전지", value: "9,420만주", tone: "neutral", magnitude: 9420 },
+      { name: "로봇", value: "7,885만주", tone: "neutral", magnitude: 7885 },
+      { name: "방산", value: "6,012만주", tone: "neutral", magnitude: 6012 },
+      { name: "저PBR", value: "5,489만주", tone: "neutral", magnitude: 5489 },
+    ],
+  },
+  tradingValue: {
+    industry: [
+      { name: "반도체와반도체장비", value: "4조 8,831억", tone: "neutral", magnitude: 48831, hot: true },
+      { name: "자동차", value: "2조 9,642억", tone: "neutral", magnitude: 29642 },
+      { name: "은행", value: "2조 4,018억", tone: "neutral", magnitude: 24018 },
+      { name: "인터넷과카탈로그소매", value: "1조 8,220억", tone: "neutral", magnitude: 18220 },
+      { name: "조선", value: "1조 6,904억", tone: "neutral", magnitude: 16904 },
+    ],
+    theme: [
+      { name: "AI 반도체", value: "6조 1,228억", tone: "neutral", magnitude: 61228, hot: true },
+      { name: "2차전지", value: "3조 7,650억", tone: "neutral", magnitude: 37650 },
+      { name: "전력설비", value: "2조 8,415억", tone: "neutral", magnitude: 28415 },
+      { name: "방산", value: "2조 1,392억", tone: "neutral", magnitude: 21392 },
+      { name: "로봇", value: "1조 9,887억", tone: "neutral", magnitude: 19887 },
+    ],
+  },
+};
+
+const investorTradingSummary = [
+  { label: "개인", value: "+7,878억", amount: 7878, tone: "up" as const },
+  { label: "외국인", value: "-11,033억", amount: -11033, tone: "down" as const },
+  { label: "기관", value: "+2,634억", amount: 2634, tone: "up" as const },
+];
+
+const programTrendSeries = [
+  {
+    label: "차익거래순매수",
+    color: "#f97316",
+    values: [0, 1420, 920, 2700, 3650, 2480, 1960, 720],
+  },
+  {
+    label: "비차익거래순매수",
+    color: "#f6b100",
+    values: [0, 20, -80, -420, -780, -1650, -1980, -2240],
+  },
+  {
+    label: "전체순매수",
+    color: "#a855f7",
+    values: [0, 1380, 940, 2140, 3300, 1540, -820, -2380],
   },
 ];
 
-const themeTop = [
-  { name: "무선통신서비스", value: "+0.76%", tone: "up" as const },
-  { name: "가정용품", value: "-1.05%", tone: "down" as const },
-  { name: "운송인프라", value: "-1.61%", tone: "down" as const },
-  { name: "광고", value: "-2.02%", tone: "down" as const },
-  { name: "담배", value: "-2.23%", tone: "down" as const },
-];
+const investorRankings = {
+  buy: {
+    foreign: [
+      { name: "대한전선", price: "37,000", change: "-7.38%", volume: "1,509,759주", tone: "down" as const, mark: "D" },
+      { name: "두산로보틱스", price: "132,100", change: "-5.84%", volume: "2,308,660주", tone: "down" as const, mark: "D" },
+      { name: "삼성전자우", price: "197,600", change: "-6.35%", volume: "2,321,584주", tone: "down" as const, mark: "S" },
+      { name: "SK스퀘어", price: "1,144,000", change: "-9.06%", volume: "282,455주", tone: "down" as const, mark: "SK" },
+      { name: "삼성SDI", price: "505,000", change: "-11.09%", volume: "198,444주", tone: "down" as const, mark: "S" },
+    ],
+    institution: [
+      { name: "삼성전기", price: "1,686,000", change: "-4.04%", volume: "577,567주", tone: "down" as const, mark: "S" },
+      { name: "KODEX 200선물...", price: "101", change: "+14.77%", volume: "5,060,513,260주", tone: "up" as const, mark: "K" },
+      { name: "원익IPS", price: "113,500", change: "-14.47%", volume: "837,923주", tone: "down" as const, mark: "W" },
+      { name: "KODEX 인버스", price: "1,066", change: "+7.03%", volume: "345,835,949주", tone: "up" as const, mark: "K" },
+      { name: "한미반도체", price: "259,500", change: "-8.30%", volume: "301,995주", tone: "down" as const, mark: "H" },
+    ],
+  },
+  sell: {
+    foreign: [
+      { name: "삼성전자", price: "300,250", change: "-8.74%", volume: "14,592,532주", tone: "down" as const, mark: "S" },
+      { name: "SK하이닉스", price: "1,956,000", change: "-5.51%", volume: "2,500,179주", tone: "down" as const, mark: "SK" },
+      { name: "LG전자", price: "267,500", change: "-11.72%", volume: "1,490,160주", tone: "down" as const, mark: "L" },
+      { name: "NAVER", price: "243,500", change: "-4.70%", volume: "1,566,189주", tone: "down" as const, mark: "N" },
+      { name: "현대차", price: "630,000", change: "-10.00%", volume: "512,518주", tone: "down" as const, mark: "H" },
+    ],
+    institution: [
+      { name: "KODEX 레버리지", price: "13,450", change: "-6.18%", volume: "11,944,210주", tone: "down" as const, mark: "K" },
+      { name: "카카오", price: "82,300", change: "-3.47%", volume: "2,942,118주", tone: "down" as const, mark: "K" },
+      { name: "셀트리온", price: "234,000", change: "-2.91%", volume: "774,930주", tone: "down" as const, mark: "C" },
+      { name: "삼성바이오", price: "1,006,000", change: "+1.21%", volume: "181,402주", tone: "up" as const, mark: "S" },
+      { name: "POSCO홀딩스", price: "405,000", change: "-5.22%", volume: "668,119주", tone: "down" as const, mark: "P" },
+    ],
+  },
+};
 
 const etfThemes = [
   { title: "주택저당채권", symbols: ["VABS", "JAAA", "GSST"], summary: "고품질 채권 ETF와 단기 소득형 상품을 모아봅니다." },
@@ -180,19 +307,23 @@ export default function MarketPage() {
       <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="inline-flex rounded-lg border border-slate-200 bg-[#f8fafc] p-1">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                aria-pressed={activeTab === tab.id}
-                className={`rounded-md px-4 py-2 text-sm font-extrabold transition focus-ring ${
-                  activeTab === tab.id ? "bg-[#071832] text-white" : "text-slate-600 hover:bg-white"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  aria-pressed={activeTab === tab.id}
+                  className={`inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-extrabold transition focus-ring ${
+                    activeTab === tab.id ? "bg-[#071832] text-white" : "text-slate-600 hover:bg-white"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
           <div className="grid grid-cols-3 gap-2 text-center text-xs font-bold">
             <StatusTile label="관찰" value={`${selectedCards.length}개`} tone="neutral" />
@@ -266,7 +397,7 @@ function IndicatorMarket() {
   return (
     <div className="mt-5 space-y-6">
       <IndexGrid items={indicatorCards} />
-      <div className="space-y-6">
+      <div className="grid gap-6 xl:grid-cols-2">
         {indicatorGroups.map((group) => (
           <IndicatorTable key={group.title} {...group} />
         ))}
@@ -365,27 +496,106 @@ function StockRanking({ title, rows, filters }: { title: string; rows: MarketRow
 }
 
 function ThemeTopFive() {
+  const [activeMetric, setActiveMetric] = useState<ThemeMetric>("rate");
+  const activeData = themeTopGroups[activeMetric];
+
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 className="text-xl font-black text-[#071832]">업종·테마 TOP 5</h2>
-      <div className="mt-4 grid gap-5 2xl:grid-cols-2">
-        {["업종", "테마"].map((title) => (
-          <div key={title}>
-            <h3 className="text-center text-base font-extrabold text-[#071832]">{title}</h3>
-            <div className="mt-4 flex h-40 items-end justify-between border-b border-slate-200">
-              {themeTop.map((item, index) => (
-                <div key={`${title}-${item.name}`} className="flex w-16 flex-col items-center">
-                  <div className={`w-8 rounded-t ${item.tone === "up" ? "bg-emerald-500" : "bg-slate-500"}`} style={{ height: `${Math.abs(Number(item.value.replace(/[+%]/g, ""))) * 34 + 18}px` }} />
-                  <p className="mt-2 text-xs font-black text-[#071832]">{index + 1}위</p>
-                  <p className="mt-1 w-16 truncate text-center text-xs font-bold text-slate-600">{item.name}</p>
-                  <p className={`text-xs font-extrabold ${toneClass(item.tone)}`}>{item.value}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
+    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
+        <h2 className="text-2xl font-black text-[#071832]">업종·테마 TOP 5</h2>
+        <ChevronRight className="h-5 w-5 text-slate-400" aria-hidden="true" />
+        <span className="text-xs font-bold text-slate-500">KRX 기준</span>
+      </div>
+      <div className="mt-4 grid gap-4 border-t border-slate-100 bg-white md:grid-cols-[128px_1fr]">
+        <div className="flex gap-2 overflow-x-auto bg-[#f8fafc] p-3 md:block md:space-y-2 md:overflow-visible md:p-4">
+          {themeMetricLabels.map((metric) => (
+            <button
+              key={metric.id}
+              type="button"
+              onClick={() => setActiveMetric(metric.id)}
+              aria-pressed={activeMetric === metric.id}
+              className={`flex h-11 min-w-24 items-center justify-center rounded-lg px-4 text-sm font-black transition focus-ring md:w-full ${
+                activeMetric === metric.id ? "bg-white text-[#071832] shadow-sm" : "text-slate-600 hover:bg-white/70 hover:text-[#071832]"
+              }`}
+            >
+              {metric.label}
+            </button>
+          ))}
+        </div>
+        <div className="grid gap-8 px-4 pb-5 md:grid-cols-2 md:px-6 md:py-5">
+          <ThemeTopChart title="업종" metric={activeMetric} items={activeData.industry} />
+          <ThemeTopChart title="테마" metric={activeMetric} items={activeData.theme} />
+        </div>
       </div>
     </section>
+  );
+}
+
+function ThemeTopChart({
+  title,
+  metric,
+  items,
+}: {
+  title: string;
+  metric: ThemeMetric;
+  items: { name: string; value: string; tone: MarketTone; magnitude: number; hot?: boolean }[];
+}) {
+  const maxMagnitude = Math.max(...items.map((item) => Math.abs(item.magnitude)), 1);
+  const isRateMetric = metric === "rate";
+
+  return (
+    <div>
+      <h3 className="text-center text-lg font-black text-[#071832]">{title}</h3>
+      <div className="mt-4">
+        <div className={`relative flex h-56 items-stretch justify-between gap-3 ${isRateMetric ? "pt-4" : "pt-2"}`}>
+          {isRateMetric && <div className="absolute left-0 right-0 top-[52px] h-px bg-slate-200" aria-hidden="true" />}
+          {!isRateMetric && <div className="absolute bottom-0 left-0 right-0 h-px bg-slate-200" aria-hidden="true" />}
+          {items.map((item, index) => {
+            const ratio = Math.max(0.14, Math.abs(item.magnitude) / maxMagnitude);
+            const barHeight = isRateMetric ? 18 + ratio * 96 : 34 + ratio * 138;
+            const isPositive = item.magnitude >= 0;
+            const barColor = isRateMetric
+              ? isPositive
+                ? "bg-emerald-500"
+                : "bg-[#5f6368]"
+              : index === 0
+                ? "bg-emerald-500"
+                : "bg-[#5f6368]";
+
+            return (
+              <div key={`${title}-${index}`} className="flex min-w-0 flex-1 flex-col items-center">
+                <div className="relative flex h-36 w-full items-start justify-center">
+                  {isRateMetric ? (
+                    <div
+                      className={`absolute left-1/2 w-12 -translate-x-1/2 rounded-b transition-all duration-500 ease-out ${barColor}`}
+                      style={{
+                        top: isPositive ? `${Math.max(0, 52 - barHeight)}px` : "52px",
+                        height: `${barHeight}px`,
+                      }}
+                    />
+                  ) : (
+                    <div
+                      className={`absolute bottom-0 left-1/2 w-12 -translate-x-1/2 rounded-t transition-all duration-500 ease-out ${barColor}`}
+                      style={{ height: `${barHeight}px` }}
+                    />
+                  )}
+                </div>
+                <div className="mt-2 min-w-0 text-center">
+                  <p className="text-sm font-black text-[#071832]">{index + 1}위</p>
+                  <p className="mt-1 flex max-w-24 items-center justify-center gap-0.5 truncate text-sm font-extrabold text-[#071832]">
+                    {item.hot && <span className="rounded bg-[#fff8e1] px-1 text-[10px] font-black text-[#8a6400]">HOT</span>}
+                    <span className="truncate">{item.name}</span>
+                  </p>
+                  <p className={`mt-1 text-sm font-black tabular-nums ${isRateMetric ? toneClass(item.tone) : index === 0 ? "text-profit" : "text-slate-600"}`}>
+                    {item.value}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -426,31 +636,226 @@ function SectorMarketCap() {
 }
 
 function InvestorTrend() {
+  const [activeMarket, setActiveMarket] = useState("전체");
+  const [activePeriod, setActivePeriod] = useState("1일");
+  const [activeRankSide, setActiveRankSide] = useState<"buy" | "sell">("buy");
+  const rankingData = investorRankings[activeRankSide];
+
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xl font-black text-[#071832]">투자자별 매매 동향</h2>
-        <div className="inline-flex rounded-lg bg-[#f8fafc] p-1">
-          {["1일", "1주", "1개월"].map((item) => (
-            <button key={item} type="button" className="rounded-md px-3 py-1.5 text-xs font-extrabold first:bg-white first:text-[#071832] text-slate-500 focus-ring">{item}</button>
+    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-[#071832]">투자자별 매매 동향</h2>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="button" className="rounded-md border border-[#071832] bg-white px-3 py-2 text-sm font-black text-[#071832] focus-ring">KRX</button>
+            {["전체", "코스피", "코스닥"].map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setActiveMarket(item)}
+                aria-pressed={activeMarket === item}
+                className={`rounded-md border px-4 py-2 text-sm font-extrabold transition focus-ring ${
+                  activeMarket === item ? "border-[#071832] bg-white text-[#071832] shadow-sm" : "border-slate-200 bg-[#f8fafc] text-slate-500 hover:bg-white"
+                }`}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="inline-flex w-fit rounded-lg bg-[#f8fafc] p-1">
+          {["1일", "1주", "1개월", "3개월"].map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setActivePeriod(item)}
+              aria-pressed={activePeriod === item}
+              className={`rounded-md px-3 py-1.5 text-xs font-extrabold transition focus-ring ${
+                activePeriod === item ? "bg-white text-[#071832] shadow-sm" : "text-slate-500 hover:bg-white hover:text-[#071832]"
+              }`}
+            >
+              {item}
+            </button>
           ))}
         </div>
       </div>
-      <div className="mt-6 grid grid-cols-3 gap-3 text-center">
-        {[
-          ["개인", "+7,878억", "up"],
-          ["외국인", "-11,033억", "down"],
-          ["기관", "+2,634억", "up"],
-        ].map(([label, value, tone]) => (
-          <div key={label}>
-            <div className={`mx-auto h-24 w-12 rounded-t ${tone === "up" ? "bg-red-500" : "bg-blue-500"}`} />
-            <p className="mt-3 font-extrabold text-[#071832]">{label}</p>
-            <p className={`mt-1 font-extrabold ${tone === "up" ? "text-profit" : "text-loss"}`}>{value}</p>
+
+      <div className="mt-5 grid min-w-0 gap-7 xl:grid-cols-[1.35fr_1fr]">
+        <div className="min-w-0 space-y-8">
+          <div className="min-w-0 rounded-lg border border-slate-100 bg-white p-4">
+            <p className="text-sm font-bold text-slate-500">2026. 06. 08. 기준</p>
+            <div className="mt-2 flex items-center gap-1">
+              <h3 className="text-xl font-black text-[#071832]">투자자 동향</h3>
+              <ChevronRight className="h-5 w-5 text-slate-400" aria-hidden="true" />
+            </div>
+            <div className="mt-7 flex h-52 items-end justify-center gap-12 border-b border-slate-200 px-4 sm:gap-20">
+              {investorTradingSummary.map((item) => {
+                const baseline = 88;
+                const height = 22 + (Math.abs(item.amount) / 11033) * 76;
+                return (
+                  <div key={item.label} className="flex w-24 flex-col items-center">
+                    <div className="relative flex h-44 w-full items-center justify-center">
+                      <div className="absolute left-0 right-0 h-px bg-slate-200" style={{ top: `${baseline}px` }} aria-hidden="true" />
+                      <div
+                        className={`absolute left-1/2 w-14 -translate-x-1/2 rounded transition-all duration-500 ${item.tone === "up" ? "bg-red-500" : "bg-blue-500"}`}
+                        style={{
+                          height: `${height}px`,
+                          top: item.amount >= 0 ? `${baseline - height}px` : `${baseline}px`,
+                        }}
+                      />
+                    </div>
+                    <p className="mt-3 text-lg font-black text-[#071832]">{item.label}</p>
+                    <p className={`mt-1 text-lg font-extrabold ${toneClass(item.tone)}`}>{item.value}</p>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        ))}
+
+          <div className="min-w-0 rounded-lg border border-slate-100 bg-white p-4">
+            <p className="text-sm font-bold text-slate-500">2026. 06. 08. 기준</p>
+            <div className="mt-2 flex items-center gap-1">
+              <h3 className="text-xl font-black text-[#071832]">프로그램 동향</h3>
+              <ChevronRight className="h-5 w-5 text-slate-400" aria-hidden="true" />
+            </div>
+            <div className="mt-4 flex flex-wrap gap-3 text-xs font-bold text-slate-600">
+              {programTrendSeries.map((series) => (
+                <span key={series.label} className="inline-flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: series.color }} aria-hidden="true" />
+                  {series.label}
+                </span>
+              ))}
+            </div>
+            <ProgramTrendChart series={programTrendSeries} />
+          </div>
+        </div>
+
+        <div className="min-w-0 rounded-lg border border-slate-100 bg-white p-4">
+          <p className="text-sm font-bold text-slate-500">2026. 06. 05. (전일) 기준</p>
+          <h3 className="mt-2 text-xl font-black text-[#071832]">외국인 / 기관 종목 상위</h3>
+          <div className="mt-4 inline-flex rounded-full bg-[#eef2f7] p-1">
+            {[
+              { id: "buy" as const, label: "순매수" },
+              { id: "sell" as const, label: "순매도" },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveRankSide(item.id)}
+                aria-pressed={activeRankSide === item.id}
+                className={`rounded-full px-4 py-2 text-sm font-black transition focus-ring ${
+                  activeRankSide === item.id ? "bg-[#30343b] text-white" : "text-slate-500 hover:text-[#071832]"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-5 space-y-6">
+            <InvestorRankingTable title="외국인" rows={rankingData.foreign} />
+            <InvestorRankingTable title="기관" rows={rankingData.institution} />
+          </div>
+        </div>
       </div>
-      <MiniLine values={trendSeries.investorFlow} tone="up" tall />
     </section>
+  );
+}
+
+function ProgramTrendChart({
+  series,
+}: {
+  series: { label: string; color: string; values: number[] }[];
+}) {
+  const width = 680;
+  const height = 230;
+  const plot = { left: 22, right: 646, top: 18, bottom: 178 };
+  const allValues = series.flatMap((item) => item.values);
+  const min = Math.min(...allValues, -3070);
+  const max = Math.max(...allValues, 4600);
+  const spread = max - min || 1;
+  const xLabels = ["", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00"];
+  const yTicks = [4600, 3070, 1530, 0, -1530, -3070];
+  const toX = (index: number, count: number) => plot.left + (index / Math.max(count - 1, 1)) * (plot.right - plot.left);
+  const toY = (value: number) => plot.bottom - ((value - min) / spread) * (plot.bottom - plot.top);
+
+  return (
+    <svg className="mt-4 h-64 w-full overflow-hidden" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="프로그램 매매 동향 차트">
+      {yTicks.map((tick) => {
+        const y = toY(tick);
+        return (
+          <g key={tick}>
+            <line x1={plot.left} x2={plot.right} y1={y} y2={y} stroke={tick === 0 ? "#94a3b8" : "#e2e8f0"} strokeDasharray={tick === 0 ? "3 4" : undefined} />
+            <text x={plot.right + 20} y={y + 4} fill="#64748b" fontSize="11" fontWeight="700">
+              {tick.toLocaleString("ko-KR")}
+            </text>
+          </g>
+        );
+      })}
+      {xLabels.map((label, index) => {
+        const x = plot.left + (index / Math.max(xLabels.length - 1, 1)) * (plot.right - plot.left);
+        return (
+          <g key={`${label}-${index}`}>
+            <line x1={x} x2={x} y1={plot.top} y2={plot.bottom} stroke="#eef2f7" />
+            <text x={x} y={plot.bottom + 22} fill="#64748b" fontSize="11" fontWeight="700" textAnchor="middle">
+              {label}
+            </text>
+          </g>
+        );
+      })}
+      <text x={plot.right + 20} y={plot.top - 6} fill="#64748b" fontSize="11" fontWeight="700">(억)</text>
+      {series.map((item) => {
+        const path = item.values
+          .map((value, index) => `${index === 0 ? "M" : "L"} ${toX(index, item.values.length).toFixed(1)} ${toY(value).toFixed(1)}`)
+          .join(" ");
+        return <path key={item.label} d={path} fill="none" stroke={item.color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.6" />;
+      })}
+    </svg>
+  );
+}
+
+function InvestorRankingTable({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: { name: string; price: string; change: string; volume: string; tone: MarketTone; mark: string }[];
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-1">
+        <h4 className="text-base font-black text-[#071832]">{title}</h4>
+        <ChevronRight className="h-4 w-4 text-slate-400" aria-hidden="true" />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[520px] w-full text-sm">
+          <thead className="border-b border-slate-200 text-xs font-bold text-slate-500">
+            <tr>
+              <th className="w-9 py-2 text-center" />
+              <th className="py-2 text-left">종목</th>
+              <th className="py-2 text-right">현재가</th>
+              <th className="py-2 text-right">등락률</th>
+              <th className="py-2 text-right">거래량</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={`${title}-${row.name}`} className="border-b border-slate-100 last:border-b-0">
+                <td className="py-2 text-center font-black text-[#071832]">{index + 1}</td>
+                <td className="py-2">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-[#0f4c81] text-[10px] font-black text-white">{row.mark}</span>
+                    <span className="truncate font-extrabold text-[#071832]">{row.name}</span>
+                  </span>
+                </td>
+                <td className="py-2 text-right font-extrabold text-[#071832]">{row.price}</td>
+                <td className={`py-2 text-right font-extrabold ${toneClass(row.tone)}`}>{row.change}</td>
+                <td className="py-2 text-right font-bold text-[#071832]">{row.volume}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -511,31 +916,58 @@ function EtfThemeSection() {
   );
 }
 
-function IndicatorTable({ title, rows }: { title: string; rows: string[][] }) {
+function IndicatorTable({ title, rows }: { title: string; rows: IndicatorRow[] }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="min-w-0 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <h2 className="text-2xl font-black text-[#071832]">{title}</h2>
-      <table className="mt-4 w-full text-sm">
-        <thead className="border-b border-slate-200 text-xs text-slate-500">
-          <tr>
-            <th className="py-3 text-left">상품명</th>
-            <th className="py-3 text-right">현재가</th>
-            <th className="py-3 text-right">전일대비</th>
-            <th className="py-3 text-right">기준 시간</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(([name, value, change, time, tone]) => (
-            <tr key={name} className="border-b border-slate-100 last:border-b-0">
-              <td className="py-3 font-extrabold text-[#071832]">{name}</td>
-              <td className="py-3 text-right font-extrabold">{value}</td>
-              <td className={`py-3 text-right font-extrabold ${toneClass(tone as MarketTone)}`}>{change}</td>
-              <td className="py-3 text-right font-bold text-slate-500">{time}</td>
+      <div className="mt-4 overflow-x-auto">
+        <table className="min-w-[540px] w-full text-sm">
+          <thead className="border-b border-slate-200 text-xs text-slate-500">
+            <tr>
+              <th className="py-3 text-left">상품명</th>
+              <th className="py-3 text-right">현재가</th>
+              <th className="py-3 text-right">전일대비</th>
+              <th className="py-3 text-right">기준 시간</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.name} className="border-b border-slate-100 last:border-b-0">
+                <td className="py-3 pr-3">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <IndicatorItemIcon icon={row.icon} />
+                    <span className="truncate font-extrabold text-[#071832]">{row.name}</span>
+                  </span>
+                </td>
+                <td className="py-3 text-right font-extrabold">{row.value}</td>
+                <td className={`py-3 text-right font-extrabold ${toneClass(row.tone)}`}>{row.change}</td>
+                <td className="py-3 text-right font-bold text-slate-500">{row.time}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
+  );
+}
+
+function IndicatorItemIcon({ icon }: { icon: IndicatorRow["icon"] }) {
+  const iconStyles: Record<IndicatorIconKind, { Icon: LucideIcon; className: string }> = {
+    country: { Icon: Flag, className: "bg-[#eef6ff] text-[#0f4c81]" },
+    centralBank: { Icon: Landmark, className: "bg-[#f1f5f9] text-slate-600" },
+    oil: { Icon: Droplet, className: "bg-[#e8f7f1] text-[#047857]" },
+    fuel: { Icon: Fuel, className: "bg-[#fff4e6] text-[#b45309]" },
+    gold: { Icon: Coins, className: "bg-[#fff8d6] text-[#8a6400]" },
+    silver: { Icon: Coins, className: "bg-[#f1f5f9] text-[#64748b]" },
+    copper: { Icon: Coins, className: "bg-[#fff1e8] text-[#b45309]" },
+  };
+  const { Icon, className } = iconStyles[icon.kind];
+
+  return (
+    <span className={`flex h-9 w-9 flex-none flex-col items-center justify-center rounded-lg ${className}`} aria-hidden="true">
+      <Icon className="h-4 w-4" />
+      <span className="mt-0.5 text-[8px] font-black leading-none tracking-normal">{icon.label}</span>
+    </span>
   );
 }
 

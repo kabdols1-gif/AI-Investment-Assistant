@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, BarChart3, Bell, PauseCircle, PlayCircle, Plus, Save, Search, ShieldCheck, Trash2, X } from "lucide-react";
+import { Activity, BarChart3, Bell, PauseCircle, Pencil, PlayCircle, Plus, Save, Search, ShieldCheck, Trash2, X } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout";
 import { useToast } from "@/components/ui";
@@ -42,6 +42,7 @@ type StrategyDraft = {
   checkCycle: string;
   alertMethod: string;
 };
+type StrategyWizardMode = "create" | "edit";
 
 const recommendedHoldings: StrategyHolding[] = [
   { name: "삼성전자", ticker: "005930", price: "66,200", weight: 40 },
@@ -88,6 +89,7 @@ export default function MyStrategyPage() {
   const [activeStep, setActiveStep] = useState(0);
   const [draft, setDraft] = useState<StrategyDraft>(() => createDraftFromStrategy(initialStrategies[0]));
   const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [wizardMode, setWizardMode] = useState<StrategyWizardMode>("create");
 
   const filteredStrategies = useMemo(
     () =>
@@ -114,6 +116,19 @@ export default function MyStrategyPage() {
     setSelectedStrategyId("");
     setDraft(createEmptyDraft());
     setActiveStep(0);
+    setWizardMode("create");
+    setIsWizardOpen(true);
+  };
+
+  const openEditStrategy = (strategy = selectedStrategy) => {
+    if (!strategy) {
+      toast.warning("수정할 전략을 먼저 선택해 주세요.");
+      return;
+    }
+    setSelectedStrategyId(strategy.id);
+    setDraft(createDraftFromStrategy(strategy));
+    setActiveStep(0);
+    setWizardMode("edit");
     setIsWizardOpen(true);
   };
 
@@ -155,7 +170,8 @@ export default function MyStrategyPage() {
       description: draft.description.trim() || "사용자 조건 기반 투자전략입니다.",
       holdings: normalizeWeights(draft.holdings),
     };
-    const nextStrategy = createStrategyFromDraft(normalizedDraft);
+    const existingStrategy = strategies.find((strategy) => strategy.id === normalizedDraft.id);
+    const nextStrategy = createStrategyFromDraft(normalizedDraft, existingStrategy);
 
     setStrategies((current) => {
       const exists = current.some((strategy) => strategy.id === nextStrategy.id);
@@ -167,7 +183,7 @@ export default function MyStrategyPage() {
     setDraft(createDraftFromStrategy(nextStrategy));
     setActiveStep(0);
     setIsWizardOpen(false);
-    toast.success("전략을 저장했습니다.");
+    toast.success(existingStrategy ? "전략 수정 내용을 저장했습니다." : "신규 전략을 저장했습니다.");
   };
 
   return (
@@ -248,6 +264,15 @@ export default function MyStrategyPage() {
                       <input type="checkbox" checked={strategy.enabled} onChange={() => toggleStrategy(strategy.id)} className="toggle-switch" />
                       ON/OFF
                     </label>
+                    <button
+                      type="button"
+                      onClick={() => openEditStrategy(strategy)}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-[#f8fafc] hover:text-[#071832] focus-ring"
+                      aria-label={`${strategy.name} 수정`}
+                      title="수정"
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden="true" />
+                    </button>
                     <button type="button" onClick={() => deleteStrategy(strategy.id)} className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-100 text-red-500 transition hover:bg-red-50 focus-ring" aria-label={`${strategy.name} 삭제`}>
                       <Trash2 className="h-4 w-4" aria-hidden="true" />
                     </button>
@@ -258,11 +283,12 @@ export default function MyStrategyPage() {
           </div>
         </div>
 
-        <StrategyInsightPanel strategy={selectedStrategy} total={strategies.length} running={runningCount} paused={pausedCount} alerts={alertCount} />
+        <StrategyInsightPanel strategy={selectedStrategy} total={strategies.length} running={runningCount} paused={pausedCount} alerts={alertCount} onEdit={openEditStrategy} />
       </section>
 
       {isWizardOpen && (
         <StrategyWizard
+          mode={wizardMode}
           draft={draft}
           activeStep={activeStep}
           onClose={() => setIsWizardOpen(false)}
@@ -276,6 +302,7 @@ export default function MyStrategyPage() {
 }
 
 function StrategyWizard({
+  mode,
   draft,
   activeStep,
   onClose,
@@ -283,6 +310,7 @@ function StrategyWizard({
   onStepChange,
   onSave,
 }: {
+  mode: StrategyWizardMode;
   draft: StrategyDraft;
   activeStep: number;
   onClose: () => void;
@@ -291,6 +319,7 @@ function StrategyWizard({
   onSave: () => void;
 }) {
   const totalWeight = draft.holdings.reduce((sum, item) => sum + item.weight, 0);
+  const isEditMode = mode === "edit";
 
   const updateHolding = (index: number, patch: Partial<StrategyHolding>) => {
     onDraftChange({
@@ -313,8 +342,10 @@ function StrategyWizard({
       <div className="w-full max-w-6xl rounded-lg border border-slate-200 bg-white p-5 shadow-2xl">
       <div className="mb-5 flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-extrabold text-[#8a6400]">신규전략 설정</p>
-          <h2 className="mt-1 text-2xl font-black tracking-normal text-[#071832]">1~4단계 전략 만들기</h2>
+          <p className="text-xs font-extrabold text-[#8a6400]">{isEditMode ? "선택 전략 수정" : "신규전략 구성"}</p>
+          <h2 className="mt-1 text-2xl font-black tracking-normal text-[#071832]">
+            {isEditMode ? "선택한 전략 1~4단계 수정" : "1~4단계 전략 만들기"}
+          </h2>
         </div>
         <button
           type="button"
@@ -477,7 +508,7 @@ function StrategyWizard({
                 className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#f6b100] px-5 text-base font-black text-[#071832] transition hover:bg-[#e0a000] focus-ring"
               >
                 <Save className="h-5 w-5" aria-hidden="true" />
-                전략 저장
+                {isEditMode ? "수정 저장" : "전략 저장"}
               </button>
             </div>
           )}
@@ -535,12 +566,14 @@ function StrategyInsightPanel({
   running,
   paused,
   alerts,
+  onEdit,
 }: {
   strategy?: StrategyItem;
   total: number;
   running: number;
   paused: number;
   alerts: number;
+  onEdit: (strategy?: StrategyItem) => void;
 }) {
   const allocation = strategy?.composition ?? [];
 
@@ -557,7 +590,19 @@ function StrategyInsightPanel({
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-base font-extrabold text-[#071832]">선택 전략</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-extrabold text-[#071832]">선택 전략</h2>
+          {strategy && (
+            <button
+              type="button"
+              onClick={() => onEdit(strategy)}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-extrabold text-slate-700 transition hover:bg-[#f8fafc] focus-ring"
+            >
+              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+              수정
+            </button>
+          )}
+        </div>
         {strategy ? (
           <>
             <div className="mt-4">
@@ -763,16 +808,23 @@ function createDraftFromStrategy(strategy?: StrategyItem): StrategyDraft {
   };
 }
 
-function createStrategyFromDraft(draft: StrategyDraft): StrategyItem {
+function createStrategyFromDraft(draft: StrategyDraft, previous?: StrategyItem): StrategyItem {
+  const targetSummary =
+    draft.holdings
+      .filter((item) => item.ticker !== "CASH")
+      .map((item) => item.name)
+      .slice(0, 3)
+      .join(", ") || previous?.target || "사용자 구성 종목";
+
   return {
     id: draft.id || `strategy-${Date.now()}`,
     name: draft.name,
-    target: draft.holdings.map((item) => item.name).slice(0, 3).join(", ") || "사용자 구성 종목",
-    status: "중지",
-    recentRun: "-",
-    returnRate: "0.00%",
+    target: targetSummary,
+    status: previous?.status ?? "중지",
+    recentRun: previous?.recentRun ?? "-",
+    returnRate: previous?.returnRate ?? "0.00%",
     risk: draft.profile === "공격형" ? "높음" : draft.profile === "안정형" ? "낮음" : "보통",
-    enabled: false,
+    enabled: previous?.enabled ?? false,
     strategyType: draft.strategyType,
     profile: draft.profile,
     operationMode: draft.operationMode,
