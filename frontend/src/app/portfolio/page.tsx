@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Calculator, Lightbulb, LineChart, Pencil, PieChart, PlayCircle, Plus, Search, Target, Trash2, X } from "lucide-react";
 import { AppShell } from "@/components/layout";
+import { LightweightAreaChart } from "@/components/charts/LightweightCharts";
 import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
 import { useToast } from "@/components/ui";
 import { useConfigStatus } from "@/hooks";
@@ -312,13 +313,18 @@ export default function PortfolioPage() {
                   ))}
                 </div>
               </div>
-              <div className="flex h-48 items-end gap-2 rounded-lg bg-[#f8fafc] p-4">
-                {chartHeights.map((height, index) => (
-                  <div key={index} className="flex flex-1 items-end">
-                    <div className="w-full rounded-t bg-[#2563eb]" style={{ height: `${height}%` }} />
-                  </div>
-                ))}
-              </div>
+              <LightweightAreaChart
+                className="rounded-lg bg-[#f8fafc] p-2"
+                data={expandChartValues(chartHeights, 4).map((value, index) => ({ time: indexedChartDate(index), value }))}
+                height={192}
+                compact={false}
+                interactive={false}
+                lineColor="#2563eb"
+                topColor="rgba(37, 99, 235, 0.24)"
+                bottomColor="rgba(37, 99, 235, 0.02)"
+                valueSuffix="%"
+                ariaLabel="Portfolio return trend chart"
+              />
             </div>
           </div>
         </section>
@@ -1047,4 +1053,32 @@ function buildConicGradient() {
     return `${item.color} ${start}% ${cursor}%`;
   });
   return `conic-gradient(${stops.join(", ")})`;
+}
+
+function indexedChartDate(index: number) {
+  return new Date(Date.UTC(2026, 5, index + 1)).toISOString().slice(0, 10);
+}
+
+function expandChartValues(values: number[], steps = 4) {
+  if (values.length < 2) return values;
+
+  const spread = Math.max(...values) - Math.min(...values) || 1;
+  const expanded: number[] = [];
+
+  values.forEach((value, index) => {
+    const next = values[index + 1];
+    if (next === undefined) {
+      expanded.push(value);
+      return;
+    }
+
+    for (let step = 0; step < steps; step += 1) {
+      const ratio = step / steps;
+      const eased = ratio * ratio * (3 - 2 * ratio);
+      const curvature = Math.sin((index + ratio) * Math.PI) * spread * 0.008;
+      expanded.push(Number((value + (next - value) * eased + curvature).toFixed(2)));
+    }
+  });
+
+  return expanded;
 }

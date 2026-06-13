@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { BarChart3, ChevronRight, Coins, DollarSign, Droplet, Flag, Fuel, Globe2, Landmark, Star, type LucideIcon } from "lucide-react";
+import { LightweightAreaChart, LightweightHistogramChart, LightweightMultiLineChart } from "@/components/charts/LightweightCharts";
 import { AppShell } from "@/components/layout";
 import type { MarketTone } from "@/lib/mockData";
 
@@ -540,60 +541,44 @@ function ThemeTopChart({
   metric: ThemeMetric;
   items: { name: string; value: string; tone: MarketTone; magnitude: number; hot?: boolean }[];
 }) {
-  const maxMagnitude = Math.max(...items.map((item) => Math.abs(item.magnitude)), 1);
   const isRateMetric = metric === "rate";
+  const chartData = items.map((item, index) => {
+    const isPositive = item.magnitude >= 0;
+    const color = isRateMetric ? (isPositive ? "#10b981" : "#5f6368") : index === 0 ? "#10b981" : "#5f6368";
+
+    return {
+      time: indexedChartDate(index),
+      value: isRateMetric ? item.magnitude : Math.abs(item.magnitude),
+      color,
+    };
+  });
 
   return (
     <div>
       <h3 className="text-center text-lg font-black text-[#071832]">{title}</h3>
-      <div className="mt-4">
-        <div className={`relative flex h-56 items-stretch justify-between gap-3 ${isRateMetric ? "pt-4" : "pt-2"}`}>
-          {isRateMetric && <div className="absolute left-0 right-0 top-[52px] h-px bg-slate-200" aria-hidden="true" />}
-          {!isRateMetric && <div className="absolute bottom-0 left-0 right-0 h-px bg-slate-200" aria-hidden="true" />}
-          {items.map((item, index) => {
-            const ratio = Math.max(0.14, Math.abs(item.magnitude) / maxMagnitude);
-            const barHeight = isRateMetric ? 18 + ratio * 96 : 34 + ratio * 138;
-            const isPositive = item.magnitude >= 0;
-            const barColor = isRateMetric
-              ? isPositive
-                ? "bg-emerald-500"
-                : "bg-[#5f6368]"
-              : index === 0
-                ? "bg-emerald-500"
-                : "bg-[#5f6368]";
-
-            return (
-              <div key={`${title}-${index}`} className="flex min-w-0 flex-1 flex-col items-center">
-                <div className="relative flex h-36 w-full items-start justify-center">
-                  {isRateMetric ? (
-                    <div
-                      className={`absolute left-1/2 w-12 -translate-x-1/2 rounded-b transition-all duration-500 ease-out ${barColor}`}
-                      style={{
-                        top: isPositive ? `${Math.max(0, 52 - barHeight)}px` : "52px",
-                        height: `${barHeight}px`,
-                      }}
-                    />
-                  ) : (
-                    <div
-                      className={`absolute bottom-0 left-1/2 w-12 -translate-x-1/2 rounded-t transition-all duration-500 ease-out ${barColor}`}
-                      style={{ height: `${barHeight}px` }}
-                    />
-                  )}
-                </div>
-                <div className="mt-2 min-w-0 text-center">
-                  <p className="text-sm font-black text-[#071832]">{index + 1}위</p>
-                  <p className="mt-1 flex max-w-24 items-center justify-center gap-0.5 truncate text-sm font-extrabold text-[#071832]">
-                    {item.hot && <span className="rounded bg-[#fff8e1] px-1 text-[10px] font-black text-[#8a6400]">HOT</span>}
-                    <span className="truncate">{item.name}</span>
-                  </p>
-                  <p className={`mt-1 text-sm font-black tabular-nums ${isRateMetric ? toneClass(item.tone) : index === 0 ? "text-profit" : "text-slate-600"}`}>
-                    {item.value}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+      <LightweightHistogramChart
+        className="mt-4 rounded-lg bg-[#f8fafc] p-2"
+        data={chartData}
+        height={176}
+        compact
+        interactive={false}
+        decimals={isRateMetric ? 2 : 0}
+        valueSuffix={isRateMetric ? "%" : ""}
+        ariaLabel={title + " ranking histogram chart"}
+      />
+      <div className="mt-3 grid grid-cols-5 gap-2 text-center">
+        {items.map((item, index) => (
+          <div key={title + "-" + index} className="min-w-0">
+            <p className="text-sm font-black text-[#071832]">{index + 1}</p>
+            <p className="mt-1 flex items-center justify-center gap-0.5 truncate text-sm font-extrabold text-[#071832]">
+              {item.hot && <span className="rounded bg-[#fff8e1] px-1 text-[10px] font-black text-[#8a6400]">HOT</span>}
+              <span className="truncate">{item.name}</span>
+            </p>
+            <p className={"mt-1 text-sm font-black tabular-nums " + (isRateMetric ? toneClass(item.tone) : index === 0 ? "text-profit" : "text-slate-600")}>
+              {item.value}
+            </p>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -766,50 +751,23 @@ function ProgramTrendChart({
 }: {
   series: { label: string; color: string; values: number[] }[];
 }) {
-  const width = 680;
-  const height = 230;
-  const plot = { left: 22, right: 646, top: 18, bottom: 178 };
-  const allValues = series.flatMap((item) => item.values);
-  const min = Math.min(...allValues, -3070);
-  const max = Math.max(...allValues, 4600);
-  const spread = max - min || 1;
-  const xLabels = ["", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00"];
-  const yTicks = [4600, 3070, 1530, 0, -1530, -3070];
-  const toX = (index: number, count: number) => plot.left + (index / Math.max(count - 1, 1)) * (plot.right - plot.left);
-  const toY = (value: number) => plot.bottom - ((value - min) / spread) * (plot.bottom - plot.top);
+  const chartSeries = series.map((item) => ({
+    label: item.label,
+    color: item.color,
+    data: expandChartValues(item.values, 5).map((value, index) => ({
+      time: indexedChartDate(index),
+      value,
+    })),
+  }));
 
   return (
-    <svg className="mt-4 h-64 w-full overflow-hidden" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="프로그램 매매 동향 차트">
-      {yTicks.map((tick) => {
-        const y = toY(tick);
-        return (
-          <g key={tick}>
-            <line x1={plot.left} x2={plot.right} y1={y} y2={y} stroke={tick === 0 ? "#94a3b8" : "#e2e8f0"} strokeDasharray={tick === 0 ? "3 4" : undefined} />
-            <text x={plot.right + 20} y={y + 4} fill="#64748b" fontSize="11" fontWeight="700">
-              {tick.toLocaleString("ko-KR")}
-            </text>
-          </g>
-        );
-      })}
-      {xLabels.map((label, index) => {
-        const x = plot.left + (index / Math.max(xLabels.length - 1, 1)) * (plot.right - plot.left);
-        return (
-          <g key={`${label}-${index}`}>
-            <line x1={x} x2={x} y1={plot.top} y2={plot.bottom} stroke="#eef2f7" />
-            <text x={x} y={plot.bottom + 22} fill="#64748b" fontSize="11" fontWeight="700" textAnchor="middle">
-              {label}
-            </text>
-          </g>
-        );
-      })}
-      <text x={plot.right + 20} y={plot.top - 6} fill="#64748b" fontSize="11" fontWeight="700">(억)</text>
-      {series.map((item) => {
-        const path = item.values
-          .map((value, index) => `${index === 0 ? "M" : "L"} ${toX(index, item.values.length).toFixed(1)} ${toY(value).toFixed(1)}`)
-          .join(" ");
-        return <path key={item.label} d={path} fill="none" stroke={item.color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.6" />;
-      })}
-    </svg>
+    <LightweightMultiLineChart
+      className="mt-4 rounded-lg bg-white"
+      series={chartSeries}
+      height={256}
+      decimals={0}
+      ariaLabel="Program trading trend chart"
+    />
   );
 }
 
@@ -982,50 +940,50 @@ function StatusTile({ label, value, tone }: { label: string; value: string; tone
 }
 
 function MiniLine({ values, tone, tall = false }: { values: number[]; tone: MarketTone; tall?: boolean }) {
-  const width = 360;
-  const height = tall ? 168 : 126;
-  const plot = { left: 10, right: width - 10, top: 14, bottom: height - 28 };
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const spread = max - min || 1;
-  const stroke = tone === "up" ? "#ef4444" : tone === "down" ? "#1686f8" : "#64748b";
-  const areaFill = tone === "up" ? "#fee2e2" : tone === "down" ? "#dbeafe" : "#e2e8f0";
-  const coords = values.map((value, index) => {
-    const x = plot.left + (index / Math.max(values.length - 1, 1)) * (plot.right - plot.left);
-    const y = plot.bottom - ((value - min) / spread) * (plot.bottom - plot.top);
-    return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) };
-  });
-  const linePath = coords.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-  const first = coords[0] ?? { x: plot.left, y: plot.bottom };
-  const last = coords[coords.length - 1] ?? first;
-  const areaPath = `${linePath} L ${last.x} ${plot.bottom} L ${first.x} ${plot.bottom} Z`;
-  const xTickIndexes = [0, Math.floor((values.length - 1) / 2), values.length - 1];
+  const chartData = expandChartValues(values, tall ? 4 : 3).map((value, index) => ({
+    time: indexedChartDate(index),
+    value,
+  }));
 
   return (
-    <svg className={`mt-4 w-full ${tall ? "h-44" : "h-32"}`} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="시간대별 가격 추세">
-      {Array.from({ length: 4 }, (_, index) => {
-        const y = plot.top + (index / 3) * (plot.bottom - plot.top);
-        return <line key={y} x1={plot.left} x2={plot.right} y1={y} y2={y} stroke="#e2e8f0" strokeDasharray="4 6" />;
-      })}
-      <line x1={plot.left} x2={plot.right} y1={plot.bottom} y2={plot.bottom} stroke="#cbd5e1" />
-      <path d={areaPath} fill={areaFill} opacity="0.72" />
-      <path d={linePath} fill="none" stroke={stroke} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
-      {coords.map((point, index) => {
-        const shouldMark = index === 0 || index === coords.length - 1 || index % 4 === 0;
-        if (!shouldMark) return null;
-        return <circle key={`${point.x}-${point.y}`} cx={point.x} cy={point.y} r={index === coords.length - 1 ? 4 : 2.5} fill="white" stroke={stroke} strokeWidth="2" />;
-      })}
-      {xTickIndexes.map((index) => {
-        const point = coords[index];
-        const labelIndex = Math.round((index / Math.max(values.length - 1, 1)) * (intradayLabels.length - 1));
-        return (
-          <text key={index} x={point?.x ?? plot.left} y={height - 8} fill="#64748b" fontSize="10" fontWeight="700" textAnchor="middle">
-            {intradayLabels[labelIndex]}
-          </text>
-        );
-      })}
-    </svg>
+    <LightweightAreaChart
+      className="mt-4 rounded-lg bg-white/70"
+      data={chartData}
+      height={tall ? 176 : 128}
+      compact={!tall}
+      interactive={false}
+      tone={tone}
+      ariaLabel="Market trend sparkline chart"
+    />
   );
+}
+
+function indexedChartDate(index: number) {
+  return new Date(Date.UTC(2026, 5, index + 1)).toISOString().slice(0, 10);
+}
+
+function expandChartValues(values: number[], steps = 4) {
+  if (values.length < 2) return values;
+
+  const spread = Math.max(...values) - Math.min(...values) || 1;
+  const expanded: number[] = [];
+
+  values.forEach((value, index) => {
+    const next = values[index + 1];
+    if (next === undefined) {
+      expanded.push(value);
+      return;
+    }
+
+    for (let step = 0; step < steps; step += 1) {
+      const ratio = step / steps;
+      const eased = ratio * ratio * (3 - 2 * ratio);
+      const curvature = Math.sin((index + ratio) * Math.PI) * spread * 0.012;
+      expanded.push(Number((value + (next - value) * eased + curvature).toFixed(2)));
+    }
+  });
+
+  return expanded;
 }
 
 function toneClass(tone: MarketTone) {

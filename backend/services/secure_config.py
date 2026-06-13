@@ -62,7 +62,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "api_secret": "",
         "account": "",
         "product_code": "",
-        "base_url": "https://dbaasapi.kbsec.com:32484",
+        "base_url": "https://ddeveloper.kbsec.com:32484",
     },
     "broker": {
         "provider": "kb",

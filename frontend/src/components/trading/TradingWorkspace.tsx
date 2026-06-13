@@ -12,6 +12,7 @@ import {
   Settings,
 } from "lucide-react";
 import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
+import { LightweightCandlestickChart } from "@/components/charts/LightweightCharts";
 import { useToast } from "@/components/ui";
 import type { BrokerProviderOption } from "@/lib/brokerProviders";
 import { tradingWorkspaceByStockId, watchItems } from "@/lib/mockData";
@@ -790,13 +791,17 @@ function ChartPanel({
   onPeriodChange: (period: string) => void;
 }) {
   const periodCandles = useMemo(
-    () => candles.map((candle, index) => ({
-      ...candle,
-      label: period === "일" || period === "주" || period === "월" ? candle.label : `${index + 1}`,
-      high: candle.high + periodOffset(period, index),
-      low: candle.low + periodOffset(period, index) / 2,
-      close: candle.close + periodOffset(period, index),
-    })),
+    () =>
+      expandCandles(
+        candles.map((candle, index) => ({
+          ...candle,
+          label: period === "?" || period === "?" || period === "?" ? candle.label : String(index + 1),
+          high: candle.high + periodOffset(period, index),
+          low: candle.low + periodOffset(period, index) / 2,
+          close: candle.close + periodOffset(period, index),
+        })),
+        4
+      ),
     [candles, period]
   );
 
@@ -835,7 +840,9 @@ function ChartPanel({
         <span className="ml-2 text-xs text-blue-600">▼ 1,030 (-1.53%)</span>
       </div>
 
-      <CandleChart candles={periodCandles} />
+      <div className="px-2 pb-3">
+        <LightweightCandlestickChart candles={periodCandles} height={340} ariaLabel={stockName + " " + period + " candlestick chart"} />
+      </div>
     </div>
   );
 }
@@ -843,6 +850,48 @@ function ChartPanel({
 function periodOffset(period: string, index: number) {
   const scale = period === "1분" ? 35 : period === "5분" ? 55 : period === "15분" ? 75 : period === "30분" ? 90 : period === "주" ? 160 : period === "월" ? 220 : 120;
   return Math.round(Math.sin(index * 0.9) * scale);
+}
+
+function expandCandles(candles: ChartCandle[], steps = 4): ChartCandle[] {
+  if (candles.length < 2) return candles;
+
+  const expanded: ChartCandle[] = [];
+
+  candles.forEach((candle, index) => {
+    const next = candles[index + 1];
+    if (!next) {
+      expanded.push(candle);
+      return;
+    }
+
+    expanded.push(candle);
+
+    for (let step = 1; step < steps; step += 1) {
+      const ratio = step / steps;
+      const eased = ratio * ratio * (3 - 2 * ratio);
+      const open = lerp(candle.close, next.open, eased);
+      const close = lerp(candle.close, next.close, eased);
+      const highBase = lerp(candle.high, next.high, eased);
+      const lowBase = lerp(candle.low, next.low, eased);
+      const wick = Math.abs(next.close - candle.close) * 0.08 + 18;
+      const arc = Math.sin(ratio * Math.PI);
+
+      expanded.push({
+        label: "",
+        open: Math.round(open),
+        high: Math.round(Math.max(open, close, highBase) + wick * arc),
+        low: Math.round(Math.min(open, close, lowBase) - wick * arc * 0.55),
+        close: Math.round(close),
+        volume: Math.round(lerp(candle.volume, next.volume, eased)),
+      });
+    }
+  });
+
+  return expanded;
+}
+
+function lerp(start: number, end: number, ratio: number) {
+  return start + (end - start) * ratio;
 }
 
 function CandleChart({ candles }: { candles: ChartCandle[] }) {

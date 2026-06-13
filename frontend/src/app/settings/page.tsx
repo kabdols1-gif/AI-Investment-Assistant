@@ -1,11 +1,12 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { Brain, Check, CheckCircle2, ChevronDown, Link2, Loader2, Save, ShieldCheck, XCircle } from "lucide-react";
+import { Brain, Check, CheckCircle2, ChevronDown, Database, Link2, Loader2, RefreshCw, Save, ShieldCheck, XCircle } from "lucide-react";
 import { AppShell } from "@/components/layout";
 import { useToast } from "@/components/ui";
 import { setSharedConfigStatus } from "@/hooks";
 import { getConfigStatus, saveKBConfig, saveLLMConfig, testKBConnection } from "@/lib/api/config";
+import { getSymbolMasterStatus, refreshSymbolMaster, type SymbolMasterCollectResult, type SymbolMasterStatus } from "@/lib/api/symbols";
 import { BROKER_PROVIDER_OPTIONS, getBrokerProviderOption } from "@/lib/brokerProviders";
 import { DEFAULT_CONFIG_STATUS } from "@/lib/configStatus";
 import { coerceLLMProvider, DEFAULT_LLM_PROVIDER, getDefaultLLMModel, getLLMProviderOption, LLM_PROVIDER_OPTIONS } from "@/lib/llmProviders";
@@ -39,6 +40,11 @@ export default function SettingsPage() {
   const [kbSecret, setKbSecret] = useState("");
   const [kbAccount, setKbAccount] = useState("");
   const [kbTestResult, setKbTestResult] = useState<KBConnectionTestResponse | null>(null);
+  const [symbolStatus, setSymbolStatus] = useState<SymbolMasterStatus | null>(null);
+  const [symbolLoadError, setSymbolLoadError] = useState<string | null>(null);
+  const [isSymbolStatusLoading, setIsSymbolStatusLoading] = useState(true);
+  const [isSymbolRefreshing, setIsSymbolRefreshing] = useState(false);
+  const [symbolRefreshResult, setSymbolRefreshResult] = useState<SymbolMasterCollectResult | null>(null);
 
   const selectedProvider = getLLMProviderOption(llmProvider);
   const selectedModelOption = selectedProvider.models.find((model) => model.id === llmModel);
@@ -76,6 +82,29 @@ export default function SettingsPage() {
         if (!mounted) return;
         applyConfig(DEFAULT_CONFIG_STATUS);
         setConfigLoadError(error instanceof Error ? error.message : "설정 상태를 불러오지 못했습니다.");
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    setIsSymbolStatusLoading(true);
+    getSymbolMasterStatus()
+      .then((nextStatus) => {
+        if (!mounted) return;
+        setSymbolStatus(nextStatus);
+        setSymbolLoadError(null);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        setSymbolLoadError(error instanceof Error ? error.message : "종목정보 상태를 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (mounted) setIsSymbolStatusLoading(false);
       });
 
     return () => {
@@ -191,6 +220,25 @@ export default function SettingsPage() {
     }
   };
 
+  const handleRefreshSymbols = async () => {
+    setIsSymbolRefreshing(true);
+    setSymbolRefreshResult(null);
+    setSymbolLoadError(null);
+    try {
+      const result = await refreshSymbolMaster("all");
+      const nextStatus = await getSymbolMasterStatus();
+      setSymbolRefreshResult(result);
+      setSymbolStatus(nextStatus);
+      toast.success(`최신 종목정보를 불러왔습니다. 총 ${formatNumber(nextStatus.total_count)}개 종목`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "최신 종목정보 불러오기에 실패했습니다.";
+      setSymbolLoadError(message);
+      toast.error(message);
+    } finally {
+      setIsSymbolRefreshing(false);
+    }
+  };
+
   return (
     <AppShell screen="settings">
       {configLoadError && (
@@ -295,6 +343,15 @@ export default function SettingsPage() {
           {kbTestResult && <BrokerResultCard result={kbTestResult} />}
         </form>
       </section>
+
+      <SymbolMasterPanel
+        status={symbolStatus}
+        loadError={symbolLoadError}
+        result={symbolRefreshResult}
+        isLoading={isSymbolStatusLoading}
+        isRefreshing={isSymbolRefreshing}
+        onRefresh={handleRefreshSymbols}
+      />
 
       <section className="mt-5 rounded-lg border border-[#f3d58a] bg-[#fff8e1] p-4">
         <div className="flex items-start gap-3">
@@ -558,4 +615,124 @@ function BrokerResultCard({ result }: { result: KBConnectionTestResponse }) {
       <p className="mt-1 text-xs text-slate-500">토큰 수신: {result.token_received ? "확인됨" : "미확인"}</p>
     </div>
   );
+}
+
+function SymbolMasterPanel({
+  status,
+  loadError,
+  result,
+  isLoading,
+  isRefreshing,
+  onRefresh,
+}: {
+  status: SymbolMasterStatus | null;
+  loadError: string | null;
+  result: SymbolMasterCollectResult | null;
+  isLoading: boolean;
+  isRefreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const exchangeCounts = result?.counts ?? result?.exchange_counts ?? status?.exchange_counts ?? null;
+  const lastUpdated = getLatestSymbolUpdatedAt(status);
+  const hasErrors = result?.errors && Object.keys(result.errors).length > 0;
+
+  return (
+    <section className="mt-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 gap-3">
+          <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg bg-[#fff8e1] text-[#8a6400] ring-1 ring-[#f3d58a]">
+            <Database className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-base font-extrabold text-[#071832]">종목정보 마스터</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              국내/해외 종목정보를 즉시 다시 불러옵니다. 서버 시작 시 하루 1회 자동 갱신되고, 필요할 때 이 버튼으로 수동 갱신할 수 있습니다.
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          className="inline-flex h-11 flex-none items-center justify-center gap-2 rounded-lg bg-[#071832] px-4 text-sm font-extrabold text-white transition hover:bg-[#102a56] disabled:cursor-not-allowed disabled:opacity-50 focus-ring"
+        >
+          {isRefreshing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+          최신 종목정보 불러오기
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <SymbolStatCard label="전체 종목" value={isLoading ? "확인 중" : formatNumber(status?.total_count ?? 0)} />
+        <SymbolStatCard label="국내 종목" value={isLoading ? "확인 중" : formatNumber(status?.domestic_count ?? 0)} />
+        <SymbolStatCard label="해외 종목" value={isLoading ? "확인 중" : formatNumber(status?.overseas_count ?? 0)} />
+      </div>
+
+      <div className="mt-4 rounded-lg bg-[#f8fafc] px-4 py-3 text-sm leading-6 text-slate-600">
+        <p>
+          최신 상태:{" "}
+          <span className={`font-extrabold ${status?.needs_update ? "text-amber-700" : "text-emerald-700"}`}>
+            {isLoading ? "확인 중" : status?.needs_update ? "갱신 필요" : "최신"}
+          </span>
+        </p>
+        <p className="mt-1">마지막 업데이트: {lastUpdated ? formatDateTime(lastUpdated) : "아직 기록 없음"}</p>
+      </div>
+
+      {exchangeCounts && (
+        <div className="mt-4 grid gap-2 sm:grid-cols-5">
+          {Object.entries(exchangeCounts).map(([exchange, count]) => (
+            <div key={exchange} className="rounded-lg border border-slate-100 px-3 py-2 text-sm">
+              <p className="font-black uppercase text-[#071832]">{exchange}</p>
+              <p className="mt-1 font-bold tabular-nums text-slate-600">{formatNumber(count)}개</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {loadError && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm font-bold text-red-700">{loadError}</p>}
+      {hasErrors && (
+        <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <p className="font-extrabold">일부 거래소 종목정보를 불러오지 못했습니다.</p>
+          {Object.entries(result.errors ?? {}).map(([exchange, message]) => (
+            <p key={exchange} className="mt-1">
+              {exchange}: {message}
+            </p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SymbolStatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-100 bg-[#f8fafc] px-4 py-3">
+      <p className="text-xs font-bold text-slate-500">{label}</p>
+      <p className="mt-1 text-lg font-black tabular-nums text-[#071832]">{value}</p>
+    </div>
+  );
+}
+
+function getLatestSymbolUpdatedAt(status: SymbolMasterStatus | null) {
+  if (!status?.updated_at) return null;
+  return Object.values(status.updated_at)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
+}
+
+function formatNumber(value: number) {
+  return value.toLocaleString("ko-KR");
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

@@ -32,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import { RiskNotice } from "@/components/safety/RiskNotice";
+import { LightweightAreaChart } from "@/components/charts/LightweightCharts";
 import { BrokerConnectionNotice } from "@/components/settings/BrokerConnectionGate";
 import { RecentViewedStocksBar } from "@/components/symbols";
 import { FloatingMicButton, VoiceInputModal } from "@/components/voice";
@@ -2294,71 +2295,24 @@ function MarketBoardCard({
 }
 
 function MarketAxisChart({ item, meta }: { item: MarketBoardItem; meta: MarketBoardMeta }) {
-  const chart = buildAxisChart(meta.series);
   const stroke = chartColor(item.tone);
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const hoveredPoint = hoveredIndex === null ? null : chart.coords[hoveredIndex];
-  const hoveredSeriesPoint = hoveredIndex === null ? null : meta.series[hoveredIndex];
+  const data = expandMarketSeries(meta.series, 4).map((point) => ({
+    time: point.date,
+    value: point.price,
+  }));
 
   return (
-    <svg className="mt-3 h-32 w-full overflow-visible" viewBox="0 0 360 176" role="img" aria-label={`${item.label} 3개월 가격 차트`}>
-      <defs>
-        <linearGradient id={`market-gradient-${item.id}`} x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={stroke} stopOpacity="0.18" />
-          <stop offset="100%" stopColor={stroke} stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      <line x1={chart.plot.right} x2={chart.plot.right} y1={chart.plot.top} y2={chart.plot.bottom} stroke="#cbd5e1" />
-      <line x1={chart.plot.left} x2={chart.plot.right} y1={chart.plot.bottom} y2={chart.plot.bottom} stroke="#cbd5e1" />
-      {chart.yTicks.map((tick) => (
-        <g key={`${tick.value}-${tick.y}`}>
-          <line x1={chart.plot.left} x2={chart.plot.right} y1={tick.y} y2={tick.y} stroke="#e2e8f0" strokeDasharray="4 6" />
-          <line x1={chart.plot.right} x2={chart.plot.right + 5} y1={tick.y} y2={tick.y} stroke="#94a3b8" />
-          <text x={chart.plot.labelX} y={tick.y + 4} fill="#64748b" fontSize="10" fontWeight="700" textAnchor="end">
-            {formatAxisValue(tick.value, meta)}
-          </text>
-        </g>
-      ))}
-      {chart.xTicks.map((tick) => (
-        <text key={tick.x} x={tick.x} y={chart.plot.bottom + 22} fill="#64748b" fontSize="10" fontWeight="700" textAnchor="middle">
-          {formatDateLabel(tick.date)}
-        </text>
-      ))}
-      <path d={chart.areaPath} fill={`url(#market-gradient-${item.id})`} />
-      <path d={chart.linePath} fill="none" stroke={stroke} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
-      {chart.coords.map((point, index) => {
-        const seriesPoint = meta.series[index];
-        const isHovered = hoveredIndex === index;
-
-        return (
-          <g key={`${point.x}-${index}`}>
-            <circle
-              cx={point.x}
-              cy={point.y}
-              r={isHovered ? 5 : index === chart.coords.length - 1 ? 4 : 2.5}
-              fill="white"
-              stroke={stroke}
-              strokeWidth={isHovered ? 2.6 : 2}
-            />
-            <circle
-              cx={point.x}
-              cy={point.y}
-              r="11"
-              fill="transparent"
-              pointerEvents="all"
-              data-market-point={`${item.id}-${index}`}
-              onMouseEnter={() => setHoveredIndex(index)}
-              onMouseLeave={() => setHoveredIndex(null)}
-            >
-              <title>{`${formatDateLabel(seriesPoint.date)} ${formatAxisValue(seriesPoint.price, meta)}`}</title>
-            </circle>
-          </g>
-        );
-      })}
-      {hoveredPoint && hoveredSeriesPoint ? (
-        <MarketChartTooltip itemId={item.id} point={hoveredPoint} data={hoveredSeriesPoint} meta={meta} />
-      ) : null}
-    </svg>
+    <LightweightAreaChart
+      className="mt-3 rounded-lg"
+      data={data}
+      height={128}
+      tone={item.tone}
+      lineColor={stroke}
+      decimals={meta.decimals}
+      valuePrefix={meta.valuePrefix}
+      valueSuffix={meta.valueSuffix}
+      ariaLabel={item.label + " market trend chart"}
+    />
   );
 }
 
@@ -2394,6 +2348,37 @@ function MarketChartTooltip({
 
 function getMarketBoardMeta(id: string) {
   return marketBoardMeta[id] ?? generatedMarketBoardMeta[id] ?? marketBoardMeta.kospi;
+}
+
+function expandMarketSeries(series: MarketSeriesPoint[], steps = 4): MarketSeriesPoint[] {
+  if (series.length < 2) return series;
+
+  const expanded: MarketSeriesPoint[] = [];
+
+  series.forEach((point, index) => {
+    const next = series[index + 1];
+    if (!next) {
+      expanded.push(point);
+      return;
+    }
+
+    const startTime = Date.parse(point.date + "T00:00:00Z");
+    const endTime = Date.parse(next.date + "T00:00:00Z");
+
+    for (let step = 0; step < steps; step += 1) {
+      const ratio = step / steps;
+      const eased = ratio * ratio * (3 - 2 * ratio);
+      const time = new Date(startTime + (endTime - startTime) * ratio).toISOString().slice(0, 10);
+      const value = point.price + (next.price - point.price) * eased;
+
+      expanded.push({
+        date: time,
+        price: Number(value.toFixed(4)),
+      });
+    }
+  });
+
+  return expanded;
 }
 
 function buildAxisChart(series: MarketSeriesPoint[]) {

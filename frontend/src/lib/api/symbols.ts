@@ -1,62 +1,39 @@
-/**
- * Symbols API
- * 
- * Stock Master File Management System
- */
-
 import { apiGet, apiPost } from "./client";
-import type { Symbol, SymbolExchange, SymbolSearchResponse, MasterStatus, CollectResult } from "@/types/symbols";
+import type { CollectResult, MasterStatus, Symbol, SymbolSearchResponse } from "@/types/symbols";
 
-interface SymbolDetailResponse {
-  status: string;
-  data: Symbol | null;
-  message?: string;
-}
+export type SymbolMasterStatus = MasterStatus;
 
-/**
- * 종목 검색
- * @param query 검색어 (종목코드 또는 종목명)
- * @param limit 최대 결과 수 (기본 20)
- * @param exchange 거래소 필터 (kospi, kosdaq)
- */
-export async function searchSymbols(
-  query: string,
-  limit: number = 20,
-  exchange?: SymbolExchange
-): Promise<SymbolSearchResponse> {
+export type SymbolMasterCollectResult = Partial<CollectResult> & {
+  counts?: Record<string, number>;
+  exchange_counts?: Record<string, number>;
+  errors?: string[] | Record<string, string>;
+};
+
+export function searchSymbols(query: string, limit = 20, exchange?: string): Promise<SymbolSearchResponse> {
   const params = new URLSearchParams({
     q: query,
-    limit: limit.toString(),
+    limit: String(limit),
   });
-  if (exchange) {
-    params.append("exchange", exchange);
-  }
-  return apiGet<SymbolSearchResponse>(`/api/symbols/search?${params}`);
+  if (exchange) params.set("exchange", exchange);
+  return apiGet<SymbolSearchResponse>(`/api/symbols/search?${params.toString()}`);
 }
 
-/**
- * 종목코드로 종목 상세 정보 조회 (마스터파일 기반)
- */
-export async function getSymbolByCode(code: string): Promise<Symbol | null> {
-  try {
-    const response = await apiGet<SymbolDetailResponse>(`/api/symbols/${code}`);
-    return response.data;
-  } catch {
-    return null;
-  }
+export function getSymbolByCode(code: string): Promise<Symbol> {
+  return apiGet<Symbol>(`/api/symbols/${encodeURIComponent(code)}`);
 }
 
-/**
- * 마스터파일 상태 조회
- */
-export async function getMasterStatus(): Promise<MasterStatus> {
-  return apiGet<MasterStatus>("/api/symbols/status");
+export function getSymbolMasterStatus(): Promise<SymbolMasterStatus> {
+  return apiGet<SymbolMasterStatus>("/api/symbols/status");
 }
 
-/**
- * 마스터파일 수집 (다운로드 및 저장)
- */
-export async function collectMasterFiles(market?: "all" | "domestic" | "overseas" | SymbolExchange): Promise<CollectResult> {
-  const query = market ? `?market=${encodeURIComponent(market)}` : "";
-  return apiPost<CollectResult>(`/api/symbols/collect${query}`);
+export function refreshSymbolMaster(market = "all"): Promise<SymbolMasterCollectResult> {
+  return apiPost<SymbolMasterCollectResult>(`/api/symbols/collect?market=${encodeURIComponent(market)}`);
+}
+
+export function getMasterStatus(): Promise<MasterStatus> {
+  return getSymbolMasterStatus();
+}
+
+export function collectMasterFiles(market = "all"): Promise<CollectResult> {
+  return apiPost<CollectResult>(`/api/symbols/collect?market=${encodeURIComponent(market)}`);
 }
