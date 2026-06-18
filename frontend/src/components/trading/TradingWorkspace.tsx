@@ -435,6 +435,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
               data={liveData}
               executions={executionData}
               livePrice={livePrice}
+              onCancelOrder={() => setOrderTab("취소")}
               orderbook={orderbookData}
               onTabChange={setMarketInfoTab}
             />
@@ -727,6 +728,7 @@ function MarketInfoPanel({
   data,
   executions,
   livePrice,
+  onCancelOrder,
   orderbook,
   onTabChange,
 }: {
@@ -734,6 +736,7 @@ function MarketInfoPanel({
   data: TradingWorkspaceData;
   executions: ExecutionData[] | null;
   livePrice: PriceData | null;
+  onCancelOrder: () => void;
   orderbook: OrderbookData | null;
   onTabChange: (tab: MarketInfoTab) => void;
 }) {
@@ -756,7 +759,18 @@ function MarketInfoPanel({
         </div>
       </div>
 
-      {activeTab === "호가" && <OrderBookPanel orderbook={orderbook} rows={data.orderBook} currentPrice={data.stock.price} executions={executions} executionRows={data.executions} />}
+      {activeTab === "호가" && (
+        <OrderBookPanel
+          orderbook={orderbook}
+          rows={data.orderBook}
+          currentPrice={data.stock.price}
+          executions={executions}
+          executionRows={data.executions}
+          livePrice={livePrice}
+          stock={data.stock}
+          onCancelOrder={onCancelOrder}
+        />
+      )}
       {activeTab === "체결" && <ExecutionPanel executions={executions} rows={data.executions} />}
       {activeTab === "거래원" && (
         <>
@@ -810,77 +824,206 @@ function CurrentPricePanel({ livePrice, stock }: { livePrice: PriceData | null; 
   );
 }
 
+type OrderbookSide = "ask" | "bid";
+type OrderbookStatItem = { label: string; value: string; tone: PriceTone };
+
 function OrderBookPanel({
   orderbook,
   rows,
   currentPrice,
   executions,
   executionRows,
+  livePrice,
+  stock,
+  onCancelOrder,
 }: {
   orderbook: OrderbookData | null;
   rows: OrderBookRow[];
   currentPrice: string;
   executions: ExecutionData[] | null;
   executionRows: ExecutionRow[];
+  livePrice: PriceData | null;
+  stock: TradingWorkspaceData["stock"];
+  onCancelOrder: () => void;
 }) {
-  const displayRows = (orderbook ? orderbookToRows(orderbook) : rows.map((row) => toDisplayOrderBookRow(row, currentPrice))).slice(0, ORDERBOOK_DISPLAY_DEPTH * 2);
-  const displayExecutions = executions && executions.length > 0 ? executionsToRows(executions).slice(0, 5) : executionRows.map(toPendingExecutionRow).slice(0, 5);
-  const totalAskVolume = orderbook ? formatInteger(orderbook.total_ask_volume) : "0";
-  const totalBidVolume = orderbook ? formatInteger(orderbook.total_bid_volume) : "0";
-  const centerPrice = orderbook ? formatInteger(orderbook.current_price) : "0";
+  const currency = orderbook?.currency ?? livePrice?.currency ?? inferStockCurrency(stock);
+  const rateReferencePrice = livePrice?.previous_close || orderbook?.current_price || 0;
+  const displayRows = padOrderbookRows(orderbook ? orderbookToRows(orderbook, rateReferencePrice) : rows.map((row) => toDisplayOrderBookRow(row, currentPrice)));
+  const askRows = displayRows.slice(0, ORDERBOOK_DISPLAY_DEPTH);
+  const bidRows = displayRows.slice(ORDERBOOK_DISPLAY_DEPTH, ORDERBOOK_DISPLAY_DEPTH * 2);
+  const displayExecutions = executions && executions.length > 0 ? executionsToRows(executions, currency).slice(0, 5) : executionRows.map(toPendingExecutionRow).slice(0, 5);
+  const askVolumes = askRows.map((row) => toNumber(row.askQuantity ?? "0"));
+  const bidVolumes = bidRows.map((row) => toNumber(row.bidQuantity ?? "0"));
+  const maxAskVolume = Math.max(...askVolumes, 1);
+  const maxBidVolume = Math.max(...bidVolumes, 1);
+  const totalAskNumber = orderbook?.total_ask_volume ?? 0;
+  const totalBidNumber = orderbook?.total_bid_volume ?? 0;
+  const totalAskVolume = orderbook ? formatInteger(totalAskNumber) : "0";
+  const totalBidVolume = orderbook ? formatInteger(totalBidNumber) : "0";
+  const netVolume = totalBidNumber - totalAskNumber;
+  const centerPriceNumber = orderbook?.current_price ?? toNumber(currentPrice);
+  const centerPrice = centerPriceNumber > 0 ? formatLadderPrice(centerPriceNumber, currency) : "0";
+  const quoteStats = buildOrderbookStats(livePrice, stock, currency);
 
   return (
-    <div className="overflow-hidden">
-      <div className="grid grid-cols-[1fr_0.85fr_0.9fr_1fr] border-b border-slate-100 bg-[#f8fafc] px-2 py-1.5 text-center text-[11px] font-extrabold text-slate-500">
-        <span>매도잔량</span>
-        <span>호가</span>
-        <span>등락률</span>
-        <span>매수잔량</span>
-      </div>
-      <div>
-        {displayRows.map((row, index) => {
-          const isCurrent = currentPrice !== "0" && row.price === currentPrice;
-          return (
-            <div
-              key={`${row.price}-${index}`}
-              data-testid="trading-orderbook-row"
-              className={`grid grid-cols-[1fr_0.85fr_0.9fr_1fr] items-center px-2 py-1 text-center text-xs ${
-                isCurrent ? "border-y border-[#1d4ed8] bg-blue-50" : index < 5 ? "bg-blue-50/35" : "bg-red-50/35"
-              }`}
-            >
-              <span className="font-bold tabular-nums text-slate-600">{row.askQuantity ?? ""}</span>
-              <span className={`font-black tabular-nums ${toneTextClass(row.tone)}`}>{row.price}</span>
-              <span className={`font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.changeRate}</span>
-              <span className="font-bold tabular-nums text-slate-600">{row.bidQuantity ?? ""}</span>
-            </div>
-          );
-        })}
-      </div>
-      <div className="grid grid-cols-3 border-t border-slate-200 px-3 py-2 text-xs font-extrabold">
-        <span className="text-blue-600">총매도 {totalAskVolume}</span>
-        <span className="text-center text-slate-500">{centerPrice}</span>
-        <span className="text-right text-red-500">총매수 {totalBidVolume}</span>
-      </div>
-      <div className="border-t border-slate-200 p-2">
-        <div className="mb-1.5 flex items-center justify-between px-1">
-          <span className="text-xs font-black text-[#071832]">체결목록</span>
-          <span className="text-[11px] font-bold text-slate-400">최근 5건</span>
-        </div>
-        <div className="grid grid-cols-4 rounded-t-md bg-[#f8fafc] px-2 py-1.5 text-center text-[11px] font-extrabold text-slate-500">
-          <span>시간</span>
-          <span>체결가</span>
-          <span>대비</span>
-          <span>체결량</span>
-        </div>
-        {displayExecutions.map((row, index) => (
-          <div key={`${row.time}-${row.price}-${row.quantity}-${index}`} className="grid grid-cols-4 border-b border-slate-100 px-2 py-1.5 text-center text-xs">
-            <span className="tabular-nums text-slate-500">{row.time}</span>
-            <span className={`font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.price}</span>
-            <span className={`font-bold tabular-nums ${toneTextClass(row.tone)}`}>{row.change}</span>
-            <span className="font-bold tabular-nums text-[#071832]">{row.quantity}</span>
+    <div className="overflow-hidden p-2">
+      <div className="grid w-[calc(100%-8px)] grid-cols-[minmax(48px,0.45fr)_minmax(108px,1fr)_minmax(54px,0.28fr)] gap-1 sm:w-full sm:grid-cols-[minmax(52px,0.52fr)_minmax(112px,1fr)_minmax(90px,0.62fr)]">
+        <div className="min-w-0">
+          <div className="flex h-6 items-center justify-end px-1 text-[11px] font-extrabold text-slate-500">매도잔량</div>
+          <div className="overflow-hidden rounded-md border border-blue-100 bg-blue-50/35">
+            {askRows.map((row, index) => (
+              <OrderbookQuantityCell
+                key={`ask-volume-${row.price}-${index}`}
+                side="ask"
+                value={row.askQuantity ?? "0"}
+                volume={askVolumes[index] ?? 0}
+                maxVolume={maxAskVolume}
+              />
+            ))}
           </div>
-        ))}
+          <OrderbookExecutionList rows={displayExecutions} />
+        </div>
+
+        <div className="min-w-0">
+          <div className="flex h-6 items-center justify-center px-1 text-[11px] font-extrabold text-slate-500">호가</div>
+          <div className="overflow-hidden rounded-md border border-slate-200">
+            {askRows.map((row, index) => (
+              <OrderbookPriceRow
+                key={`ask-price-${row.price}-${index}`}
+                row={row}
+                side="ask"
+                isCurrent={isOrderbookCurrentRow(row.price, centerPriceNumber, currency)}
+              />
+            ))}
+            <div className="flex h-px items-center bg-slate-200" aria-hidden="true" />
+            {bidRows.map((row, index) => (
+              <OrderbookPriceRow
+                key={`bid-price-${row.price}-${index}`}
+                row={row}
+                side="bid"
+                isCurrent={isOrderbookCurrentRow(row.price, centerPriceNumber, currency)}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          <OrderbookStatsList stats={quoteStats} />
+          <div className="mt-1.5">
+            <div className="flex h-6 items-center justify-start px-1 text-[11px] font-extrabold text-slate-500">매수잔량</div>
+            <div className="overflow-hidden rounded-md border border-red-100 bg-red-50/35">
+              {bidRows.map((row, index) => (
+                <OrderbookQuantityCell
+                  key={`bid-volume-${row.price}-${index}`}
+                  side="bid"
+                  value={row.bidQuantity ?? "0"}
+                  volume={bidVolumes[index] ?? 0}
+                  maxVolume={maxBidVolume}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
+
+      <div className="mt-2 grid grid-cols-[1fr_0.9fr_1fr] overflow-hidden rounded-md border border-slate-200 bg-white text-xs font-black tabular-nums">
+        <button
+          type="button"
+          onClick={onCancelOrder}
+          className="flex h-9 min-w-0 items-center justify-between gap-1 border-r border-slate-200 px-1.5 text-blue-700 transition hover:bg-blue-50 focus-ring"
+          aria-label="매도 주문 취소 화면으로 이동"
+        >
+          <span className="rounded bg-blue-600 px-1.5 py-1 text-[11px] text-white">매도취소</span>
+          <span className="truncate">{totalAskVolume}</span>
+        </button>
+        <div className="flex h-9 items-center justify-center border-r border-slate-200 px-1 text-slate-500">
+          <span className={netVolume > 0 ? "text-red-500" : netVolume < 0 ? "text-blue-600" : "text-slate-500"}>{formatSignedInteger(netVolume)}</span>
+          <span className="sr-only">현재가 {centerPrice}</span>
+        </div>
+        <button
+          type="button"
+          onClick={onCancelOrder}
+          className="flex h-9 min-w-0 items-center justify-between gap-1 px-1.5 text-red-600 transition hover:bg-red-50 focus-ring"
+          aria-label="매수 주문 취소 화면으로 이동"
+        >
+          <span className="truncate">{totalBidVolume}</span>
+          <span className="rounded bg-red-600 px-1.5 py-1 text-[11px] text-white">매수취소</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function OrderbookQuantityCell({
+  maxVolume,
+  side,
+  value,
+  volume,
+}: {
+  maxVolume: number;
+  side: OrderbookSide;
+  value: string;
+  volume: number;
+}) {
+  const barWidth = volume > 0 ? Math.max(12, Math.min(100, (volume / maxVolume) * 100)) : 0;
+  const barClass = side === "ask" ? "right-0 bg-blue-200/80" : "left-0 bg-red-200/80";
+  const textClass = side === "ask" ? "justify-end text-blue-700" : "justify-start text-red-600";
+
+  return (
+    <div className="relative h-8 overflow-hidden border-b border-white/70 last:border-b-0">
+      <div className={`absolute inset-y-0 ${barClass}`} style={{ width: `${barWidth}%` }} aria-hidden="true" />
+      <div className={`relative z-10 flex h-full min-w-0 items-center px-1.5 text-xs font-black tabular-nums ${textClass}`}>
+        <span className="min-w-0 truncate">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function OrderbookPriceRow({ isCurrent, row, side }: { isCurrent: boolean; row: OrderBookRow; side: OrderbookSide }) {
+  const sideClass = side === "ask" ? "bg-blue-50" : "bg-red-50";
+  const currentClass = isCurrent ? "ring-1 ring-inset ring-[#1d4ed8]" : "";
+
+  return (
+    <div
+      data-testid="trading-orderbook-row"
+      className={`grid h-8 grid-cols-[minmax(0,1fr)_54px] items-center gap-1 border-b border-white/80 px-2 text-right text-xs last:border-b-0 ${sideClass} ${currentClass}`}
+    >
+      <span className={`truncate text-sm font-black tabular-nums ${toneTextClass(row.tone)}`}>{row.price}</span>
+      <span className={`text-[11px] font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.changeRate}</span>
+    </div>
+  );
+}
+
+function OrderbookExecutionList({ rows }: { rows: ExecutionRow[] }) {
+  return (
+    <div className="mt-1.5 overflow-hidden rounded-md border border-slate-200 bg-white">
+      <div className="flex h-6 items-center justify-between border-b border-slate-100 px-1.5">
+        <span className="text-[11px] font-black text-[#071832]">체결목록</span>
+        <span className="text-[10px] font-bold text-slate-400">최근 5건</span>
+      </div>
+      {rows.map((row, index) => (
+        <div
+          key={`${row.time}-${row.price}-${row.quantity}-${index}`}
+          data-testid="trading-orderbook-execution-row"
+          className="grid h-7 grid-cols-[minmax(0,1fr)_38px] items-center gap-1 border-b border-slate-100 px-1.5 text-xs last:border-b-0"
+        >
+          <span className={`truncate font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.price}</span>
+          <span className="text-right font-bold tabular-nums text-blue-600">{row.quantity}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OrderbookStatsList({ stats }: { stats: OrderbookStatItem[] }) {
+  return (
+    <div className="overflow-hidden rounded-md border border-slate-200 bg-[#f8fafc] px-2 py-1" data-testid="trading-orderbook-stats">
+      {stats.map((item) => (
+        <div key={item.label} className="grid h-6 grid-cols-[44px_minmax(0,1fr)] items-center gap-1 text-[11px] sm:grid-cols-[56px_minmax(0,1fr)]">
+          <span className="truncate font-extrabold text-slate-500">{item.label}</span>
+          <span className={`truncate text-right font-black tabular-nums ${toneTextClass(item.tone)}`} title={item.value}>{item.value}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1218,35 +1361,78 @@ function ChartPanel({
   );
 }
 
-function orderbookToRows(orderbook: OrderbookData): OrderBookRow[] {
+function padOrderbookRows(rows: OrderBookRow[]) {
+  const paddedRows = rows.slice(0, ORDERBOOK_DISPLAY_DEPTH * 2);
+  while (paddedRows.length < ORDERBOOK_DISPLAY_DEPTH * 2) {
+    const index = paddedRows.length;
+    paddedRows.push({
+      askQuantity: index < ORDERBOOK_DISPLAY_DEPTH ? "0" : undefined,
+      price: "0",
+      changeRate: "0%",
+      bidQuantity: index >= ORDERBOOK_DISPLAY_DEPTH ? "0" : undefined,
+      tone: "neutral",
+    });
+  }
+  return paddedRows;
+}
+
+function buildOrderbookStats(livePrice: PriceData | null, stock: TradingWorkspaceData["stock"], currency?: string | null): OrderbookStatItem[] {
+  const statCurrency = livePrice?.currency ?? currency;
+  const previousClose = livePrice?.previous_close ?? 0;
+  const volume = livePrice?.volume && livePrice.volume > 0 ? Math.round(livePrice.volume).toLocaleString("ko-KR") : stock.volume;
+  const priceTone = (value: number | null | undefined) =>
+    typeof value === "number" && Number.isFinite(value) && previousClose > 0 ? toneFromNumber(value - previousClose) : "neutral";
+
+  return [
+    { label: "증거금율", value: formatMarginRate(livePrice?.margin_rate), tone: "neutral" },
+    { label: "전일종가", value: formatOptionalPrice(livePrice?.previous_close, "0", statCurrency), tone: "neutral" },
+    { label: "거래량", value: volume, tone: "neutral" },
+    { label: "52고", value: formatOptionalPrice(livePrice?.w52_high, "0", statCurrency), tone: priceTone(livePrice?.w52_high) },
+    { label: "52저", value: formatOptionalPrice(livePrice?.w52_low, "0", statCurrency), tone: priceTone(livePrice?.w52_low) },
+    { label: "시", value: formatOptionalPrice(livePrice?.open, "0", statCurrency), tone: priceTone(livePrice?.open) },
+    { label: "고", value: formatOptionalPrice(livePrice?.high, "0", statCurrency), tone: priceTone(livePrice?.high) },
+    { label: "저", value: formatOptionalPrice(livePrice?.low, "0", statCurrency), tone: priceTone(livePrice?.low) },
+  ];
+}
+
+function isOrderbookCurrentRow(price: string, centerPrice: number, currency?: string | null) {
+  if (!Number.isFinite(centerPrice) || centerPrice <= 0) return false;
+  const rowPrice = toNumber(price);
+  const tolerance = isForeignCurrency(currency) ? 0.005 : 0.5;
+  return rowPrice > 0 && Math.abs(rowPrice - centerPrice) <= tolerance;
+}
+
+function orderbookToRows(orderbook: OrderbookData, referencePrice?: number): OrderBookRow[] {
   const currentPrice = orderbook.current_price || 0;
+  const rateReferencePrice = referencePrice && referencePrice > 0 ? referencePrice : currentPrice;
+  const currency = orderbook.currency;
   const askRows: OrderBookRow[] = (orderbook.ask_prices ?? []).slice(0, ORDERBOOK_DISPLAY_DEPTH).map((price, index) => {
     const volume = orderbook.ask_volumes?.[index] ?? 0;
     return {
       askQuantity: formatInteger(volume),
-      price: formatInteger(price),
-      changeRate: formatOrderbookRate(price, currentPrice),
-      tone: toneFromNumber(price - currentPrice),
+      price: formatLadderPrice(price, currency),
+      changeRate: formatOrderbookRate(price, rateReferencePrice),
+      tone: toneFromNumber(price - rateReferencePrice),
     };
   });
   const bidRows: OrderBookRow[] = (orderbook.bid_prices ?? []).slice(0, ORDERBOOK_DISPLAY_DEPTH).map((price, index) => {
     const volume = orderbook.bid_volumes?.[index] ?? 0;
     return {
-      price: formatInteger(price),
-      changeRate: formatOrderbookRate(price, currentPrice),
+      price: formatLadderPrice(price, currency),
+      changeRate: formatOrderbookRate(price, rateReferencePrice),
       bidQuantity: formatInteger(volume),
-      tone: toneFromNumber(price - currentPrice),
+      tone: toneFromNumber(price - rateReferencePrice),
     };
   });
 
   return [...askRows.reverse(), ...bidRows].filter((row) => row.price !== "0" || row.askQuantity !== "0" || row.bidQuantity !== "0");
 }
 
-function executionsToRows(executions: ExecutionData[]): ExecutionRow[] {
+function executionsToRows(executions: ExecutionData[], currency?: string | null): ExecutionRow[] {
   return executions.map((execution, index) => ({
     time: execution.time || String(index + 1),
-    price: formatInteger(execution.price),
-    change: formatSignedPrice(execution.change),
+    price: formatLadderPrice(execution.price, currency),
+    change: formatSignedPrice(execution.change, currency),
     quantity: formatInteger(execution.quantity),
     tone: execution.side === "buy" ? "up" : execution.side === "sell" ? "down" : toneFromNumber(execution.change),
   }));
@@ -1261,6 +1447,22 @@ function formatOrderbookRate(price: number, currentPrice: number) {
 
 function formatInteger(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value).toLocaleString("ko-KR") : "0";
+}
+
+function formatLadderPrice(value: number | null | undefined, currency?: string | null) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "0";
+  if (isForeignCurrency(currency)) {
+    return value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    });
+  }
+  return Math.round(value).toLocaleString("ko-KR");
+}
+
+function formatSignedInteger(value: number) {
+  if (!Number.isFinite(value) || value === 0) return "0";
+  return `${value > 0 ? "+" : ""}${Math.round(value).toLocaleString("ko-KR")}`;
 }
 
 function toDisplayOrderBookRow(row: OrderBookRow, currentPrice: string): OrderBookRow {
