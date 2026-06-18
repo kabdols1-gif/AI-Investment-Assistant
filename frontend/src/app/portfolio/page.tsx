@@ -6,10 +6,12 @@ import { AppShell } from "@/components/layout";
 import { LightweightAreaChart } from "@/components/charts/LightweightCharts";
 import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
 import { useToast } from "@/components/ui";
-import { useConfigStatus } from "@/hooks";
+import { useConfigStatus, useMarketQuotes } from "@/hooks";
+import type { PriceData } from "@/lib/api/market";
 import { getBrokerProviderOption } from "@/lib/brokerProviders";
 import { isBrokerConnected } from "@/lib/configStatus";
-import { assetAllocation, assetSummary, holdingsSummaryItems, portfolioList, tradingWorkspaceByStockId } from "@/lib/mockData";
+import { formatPrice, formatQuoteDisplay, getQuoteFromMap, hasUsableQuote } from "@/lib/marketQuoteDisplay";
+import { assetAllocation, holdingsSummaryItems, portfolioList, tradingWorkspaceByStockId } from "@/lib/mockData";
 import type { HoldingSummaryItem } from "@/types/symbols";
 
 const periodOptions = ["1개월", "3개월", "6개월", "1년", "전체"];
@@ -117,12 +119,35 @@ export default function PortfolioPage() {
   const [editingPortfolio, setEditingPortfolio] = useState<ManagedPortfolio | null>(null);
   const [isAllocationTooltipOpen, setIsAllocationTooltipOpen] = useState(false);
   const holdingsSectionRef = useRef<HTMLElement | null>(null);
+  const portfolioQuoteCodes = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...portfolios.flatMap((portfolio) => portfolio.holdings.map((holding) => holding.code)),
+          ...stockCandidates.map((candidate) => candidate.code),
+        ])
+      ),
+    [portfolios]
+  );
+  const { quotes } = useMarketQuotes(portfolioQuoteCodes);
   const chartHeights = useMemo(() => periodChartHeights[selectedPeriod] ?? periodChartHeights["1년"], [selectedPeriod]);
   const brokerOption = getBrokerProviderOption(configStatus.broker_provider);
   const brokerConnected = isBrokerConnected(configStatus);
   const pieGradient = buildConicGradient();
-  const selectedPortfolio = portfolios.find((portfolio) => portfolio.id === selectedPortfolioId) ?? portfolios[0] ?? null;
+  const displayPortfolios = useMemo(
+    () => portfolios.map((portfolio) => applyQuotesToPortfolio(portfolio, quotes)),
+    [portfolios, quotes]
+  );
+  const portfolioTotalValueText = useMemo(
+    () => `${formatPrice(displayPortfolios.reduce((sum, portfolio) => sum + parseCurrencyNumber(portfolio.value, 0), 0))}원`,
+    [displayPortfolios]
+  );
+  const selectedPortfolio = displayPortfolios.find((portfolio) => portfolio.id === selectedPortfolioId) ?? displayPortfolios[0] ?? null;
   const selectedPortfolioHoldings = useMemo(() => buildPortfolioDisplayHoldings(selectedPortfolio?.holdings ?? []), [selectedPortfolio]);
+  const displayStockCandidates = useMemo(
+    () => stockCandidates.map((candidate) => applyQuoteToStockCandidate(candidate, quotes)),
+    [quotes]
+  );
 
   const handlePortfolioStockSelect = (id: string) => {
     window.dispatchEvent(new CustomEvent("portfolio-stock-selected", { detail: { id } }));
@@ -183,7 +208,7 @@ export default function PortfolioPage() {
               </div>
               <div className="rounded-lg bg-[#f8fafc] px-4 py-3 text-right">
                 <p className="text-xs font-bold text-slate-500">총평가금액</p>
-                <p className="mt-1 text-xl font-black text-[#071832]">{assetSummary.totalAsset}</p>
+                <p className="mt-1 text-xl font-black text-[#071832]">{portfolioTotalValueText}</p>
               </div>
             </div>
 
@@ -218,13 +243,13 @@ export default function PortfolioPage() {
                   <span className="text-center">관리</span>
                 </div>
                 {portfolios.length > 0 ? (
-                  portfolios.map((portfolio) => (
+                  displayPortfolios.map((portfolio) => (
                     <PortfolioConfigRow
                       key={portfolio.id}
                       portfolio={portfolio}
                       selected={portfolio.id === selectedPortfolio?.id}
                       onDelete={() => handleDeletePortfolio(portfolio.id)}
-                      onEdit={() => setEditingPortfolio(portfolio)}
+                      onEdit={() => setEditingPortfolio(portfolios.find((rawPortfolio) => rawPortfolio.id === portfolio.id) ?? portfolio)}
                       onSelect={() => setSelectedPortfolioId(portfolio.id)}
                     />
                   ))
@@ -256,7 +281,7 @@ export default function PortfolioPage() {
               >
                 <div className="flex h-28 w-28 flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
                   <span className="text-xs text-slate-500">총평가금액</span>
-                  <span className="mt-1 text-sm font-extrabold text-[#071832]">{assetSummary.totalAsset}</span>
+                  <span className="mt-1 text-sm font-extrabold text-[#071832]">{portfolioTotalValueText}</span>
                 </div>
                 <div
                   className={`pointer-events-none absolute left-1/2 top-full z-30 mt-3 w-80 max-w-[calc(100vw-3rem)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white p-3 text-left shadow-2xl ${isAllocationTooltipOpen ? "block" : "hidden"}`}
@@ -403,14 +428,14 @@ export default function PortfolioPage() {
 
       {isAddModalOpen ? (
         <PortfolioConfigModal
-          candidates={stockCandidates}
+          candidates={displayStockCandidates}
           onClose={() => setIsAddModalOpen(false)}
           onSubmit={handleCreatePortfolio}
         />
       ) : null}
       {editingPortfolio ? (
         <PortfolioConfigModal
-          candidates={stockCandidates}
+          candidates={displayStockCandidates}
           initialPortfolio={editingPortfolio}
           onClose={() => setEditingPortfolio(null)}
           onSubmit={(draft) => handleUpdatePortfolio(editingPortfolio.id, draft)}
@@ -885,14 +910,13 @@ function createPortfolioFromDraft(draft: PortfolioDraftPayload, id = `portfolio-
 
 function createDraftStocksFromPortfolio(portfolio: ManagedPortfolio): DraftStockItem[] {
   return portfolio.holdings.map((holding) => {
-    const stock = tradingWorkspaceByStockId[holding.id]?.stock;
     return {
       id: holding.id,
       code: holding.code,
       name: holding.name,
       iconUrl: holding.iconUrl,
-      price: stock?.price ?? holding.valuationAmount,
-      changeRate: stock?.changeRate ?? holding.profitLossRate,
+      price: "0",
+      changeRate: "0%",
       weight: holding.weight,
     };
   });
@@ -930,6 +954,61 @@ function distributeDraftWeights(stocks: DraftStockItem[]) {
   return stocks.map((stock, index) => ({ ...stock, weight: baseWeight + (index < remainder ? 1 : 0) }));
 }
 
+function applyQuotesToPortfolio(portfolio: ManagedPortfolio, quotes: Record<string, PriceData | null | undefined>): ManagedPortfolio {
+  const holdings = portfolio.holdings.map((holding) => applyQuoteToPortfolioHolding(holding, quotes));
+  const totalValue = holdings.reduce((sum, holding) => sum + parseCurrencyNumber(holding.valuationAmount, 0), 0);
+  const returnRate = calculateWeightedRateFromRates(holdings.map((holding) => ({ changeRate: holding.profitLossRate, weight: holding.weight })));
+
+  return {
+    ...portfolio,
+    holdings,
+    value: `${formatPrice(totalValue)}원`,
+    returnRate: formatRate(returnRate),
+  };
+}
+
+function applyQuoteToPortfolioHolding(
+  holding: PortfolioStockItem,
+  quotes: Record<string, PriceData | null | undefined>
+): PortfolioStockItem {
+  const quote = getQuoteFromMap(quotes, holding.code);
+  const display = formatQuoteDisplay(quote);
+  const quantity = parseHoldingQuantity(holding.quantity);
+
+  if (!hasUsableQuote(quote)) {
+    return {
+      ...holding,
+      valuationAmount: "0원",
+      profitLossAmount: "0원",
+      profitLossRate: "0%",
+      todayChangeRate: "0%",
+    };
+  }
+
+  const valuationAmount = quantity > 0 ? Math.round(quote.price) * quantity : parseCurrencyNumber(display.price, 0);
+  const todayProfit = quantity > 0 ? Math.round(quote.change) * quantity : 0;
+
+  return {
+    ...holding,
+    valuationAmount: `${formatPrice(valuationAmount)}원`,
+    profitLossAmount: formatSignedWonText(todayProfit),
+    profitLossRate: display.changeRate,
+    todayChangeRate: display.changeRate,
+  };
+}
+
+function applyQuoteToStockCandidate(
+  candidate: PortfolioStockCandidate,
+  quotes: Record<string, PriceData | null | undefined>
+): PortfolioStockCandidate {
+  const quote = formatQuoteDisplay(getQuoteFromMap(quotes, candidate.code));
+  return {
+    ...candidate,
+    price: quote.price,
+    changeRate: quote.changeRate,
+  };
+}
+
 function buildPortfolioDisplayHoldings(holdings: PortfolioStockItem[]): PortfolioDisplayStockItem[] {
   const marketValues = holdings.map((holding) => getHoldingMarketValue(holding));
   const totalMarketValue = marketValues.reduce((sum, value) => sum + value, 0);
@@ -956,10 +1035,6 @@ function buildPortfolioDisplayHoldings(holdings: PortfolioStockItem[]): Portfoli
 function getHoldingMarketValue(holding: PortfolioStockItem) {
   const valuationAmount = parseCurrencyNumber(holding.valuationAmount, 0);
   if (valuationAmount > 0) return valuationAmount;
-
-  const quantity = parseHoldingQuantity(holding.quantity);
-  const price = parseCurrencyNumber(tradingWorkspaceByStockId[holding.id]?.stock.price ?? "", 0);
-  if (quantity > 0 && price > 0) return quantity * price;
 
   return holding.weight;
 }
@@ -1002,6 +1077,10 @@ function calculateBacktest(stocks: DraftStockItem[], initialAmount: string): Bac
 }
 
 function calculateWeightedRate(stocks: DraftStockItem[]) {
+  return calculateWeightedRateFromRates(stocks);
+}
+
+function calculateWeightedRateFromRates(stocks: Array<{ changeRate: string; weight: number }>) {
   const totalWeight = stocks.reduce((sum, stock) => sum + stock.weight, 0);
   if (totalWeight <= 0) return 0;
   return stocks.reduce((sum, stock) => sum + parseRate(stock.changeRate) * stock.weight, 0) / totalWeight;
@@ -1014,6 +1093,12 @@ function parseRate(value: string) {
 
 function formatRate(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatSignedWonText(value: number) {
+  const rounded = Math.round(value);
+  if (rounded === 0) return "0원";
+  return `${rounded > 0 ? "+" : "-"}${formatPrice(Math.abs(rounded))}원`;
 }
 
 function parseCurrencyNumber(value: string, fallback = 50_000_000) {

@@ -1,264 +1,261 @@
 "use client";
 
-import { useState } from "react";
-import { MessageSquareText, X } from "lucide-react";
+import Link from "next/link";
+import { useMemo } from "react";
+import { Briefcase, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
+import { useMarketQuotes } from "@/hooks";
+import { applyQuotesToHoldings, buildQuoteAdjustedBalance } from "@/lib/accountQuoteDisplay";
+import { filterStockHoldings, getOrderHref, getStockIconUrl, normalizeStockCode } from "@/lib/accountHoldings";
 import type { BrokerProviderOption } from "@/lib/brokerProviders";
-import { holdingsSummaryItems } from "@/lib/mockData";
-import type { HoldingSummaryItem } from "@/types/symbols";
+import { cn } from "@/lib/utils";
+import type { Balance, Holding } from "@/types/account";
 
 interface HoldingsAndWatchlistCardProps {
   brokerConnected: boolean;
   brokerOption: BrokerProviderOption;
+  holdings?: Holding[];
+  balance?: Balance | null;
 }
 
 export function HoldingsAndWatchlistCard({
   brokerConnected,
   brokerOption,
+  holdings = [],
+  balance,
 }: HoldingsAndWatchlistCardProps) {
-  const holdings = holdingsSummaryItems.slice(0, 3);
-  const [selectedComment, setSelectedComment] = useState<{
-    item: HoldingSummaryItem;
-    comment: string;
-  } | null>(null);
-
-  const handleHoldingSelect = (id: string) => {
-    window.dispatchEvent(new CustomEvent("holding-stock-selected", { detail: { id } }));
-  };
+  const displayHoldings = filterStockHoldings(balance?.holdings ?? holdings);
+  const { quotes } = useMarketQuotes(displayHoldings.map((holding) => normalizeStockCode(holding.stock_code)));
+  const quotedHoldings = useMemo(() => applyQuotesToHoldings(displayHoldings, quotes), [displayHoldings, quotes]);
+  const quoteAdjustedBalance = useMemo(() => buildQuoteAdjustedBalance(balance, quotedHoldings), [balance, quotedHoldings]);
+  const summary = summarizeBalance(quoteAdjustedBalance, quotedHoldings);
 
   return (
-    <>
-      <section className="mt-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex items-center gap-3">
-          <h2 className="text-base font-extrabold text-[#071832]">보유잔고</h2>
-        </div>
-
-        <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption} showNotice={false}>
-          <HoldingsSummaryTable
-            items={holdings}
-            onOpenComment={setSelectedComment}
-            onSelectHolding={handleHoldingSelect}
-          />
-        </BrokerConnectionGate>
-
-        <p className="mt-3 text-xs font-medium text-slate-500">
-          * 실시간 데이터는 지연될 수 있습니다. 현재 화면은 샘플 데이터입니다.
-        </p>
-      </section>
-      {selectedComment && (
-        <AiCommentModal
-          item={selectedComment.item}
-          comment={selectedComment.comment}
-          onClose={() => setSelectedComment(null)}
-        />
-      )}
-    </>
-  );
-}
-
-function HoldingsSummaryTable({
-  items,
-  onOpenComment,
-  onSelectHolding,
-}: {
-  items: HoldingSummaryItem[];
-  onOpenComment: (payload: { item: HoldingSummaryItem; comment: string }) => void;
-  onSelectHolding: (id: string) => void;
-}) {
-  return (
-    <section className="rounded-lg border border-slate-100 bg-white p-3">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-extrabold text-[#071832]">보유잔고 ({items.length})</h3>
-      </div>
-      <div className="overflow-x-auto">
-        <div className="min-w-[900px]">
-          <div className="grid grid-cols-[minmax(104px,0.9fr)_54px_84px_82px_58px_70px_minmax(240px,1.8fr)_54px] gap-2 border-b border-slate-100 pb-2 text-xs font-bold text-slate-500">
-            <span>종목명</span>
-            <span className="text-right">보유수량</span>
-            <span className="text-right">평가금액</span>
-            <span className="text-right">평가손익</span>
-            <span className="text-right">수익률</span>
-            <span className="text-right">오늘 등락률</span>
-            <span>뉴스정보</span>
-            <span>AI 코멘트</span>
+    <section className="mt-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Briefcase className="h-5 w-5 text-[#8a6400]" aria-hidden="true" />
+            <h2 className="text-base font-extrabold text-[#071832]">보유잔고</h2>
+            <span className="rounded-full bg-[#f8fafc] px-2 py-0.5 text-[11px] font-black text-slate-500">
+              {displayHoldings.length}종목
+            </span>
           </div>
-          {items.map((item) => {
-            const comment = holdingAiComment(item);
-            const news = holdingNewsInfo(item);
-            return (
-              <div
-                key={item.id}
-                className="grid grid-cols-[minmax(104px,0.9fr)_54px_84px_82px_58px_70px_minmax(240px,1.8fr)_54px] items-center gap-2 border-b border-slate-100 py-3 last:border-b-0"
-              >
-                <StockIdentity item={item} onSelect={() => onSelectHolding(item.id)} />
-                <span className="text-right text-xs font-bold tabular-nums text-[#071832]">{item.quantity}</span>
-                <span className="text-right text-xs font-bold tabular-nums text-[#071832]">{item.valuationAmount}</span>
-                <span className={`text-right text-xs font-extrabold tabular-nums ${changeValueClass(item.profitLossAmount)}`}>
-                  {item.profitLossAmount}
-                </span>
-                <span className={`text-right text-xs font-extrabold tabular-nums ${changeValueClass(item.profitLossRate)}`}>
-                  {item.profitLossRate}
-                </span>
-                <span className={`text-right text-xs font-extrabold tabular-nums ${changeValueClass(item.todayChangeRate)}`}>
-                  {item.todayChangeRate}
-                </span>
-                <a
-                  href={news.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="min-w-0 truncate text-xs font-bold text-[#0f4c81] underline-offset-2 hover:underline focus-ring"
-                  title={news.title}
-                >
-                  {news.title}
-                </a>
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => onOpenComment({ item, comment })}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-[#0f4c81] transition hover:bg-[#fff8e1] focus-ring"
-                    aria-label={`${item.name} AI 코멘트 자세히 보기`}
-                    title="AI 코멘트 자세히 보기"
-                  >
-                    <MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+          <p className="mt-1 text-xs font-semibold text-slate-500">
+            {balance?.fetched_at ? `KB 잔고평가 기준 ${formatDateTime(balance.fetched_at)}` : "KB OpenAPI 잔고평가를 조회합니다."}
+          </p>
         </div>
       </div>
+
+      <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption} showNotice={false}>
+        <BalanceStrip summary={summary} />
+        <HoldingsSummaryTable holdings={quotedHoldings} />
+      </BrokerConnectionGate>
+
+      <p className="mt-3 text-xs font-medium text-slate-500">
+        * KB OpenAPI SAQM9006 계좌 조회 후 SSQM2952 잔고평가로 구성한 화면입니다.
+      </p>
     </section>
   );
 }
 
-function StockIdentity({
-  item,
-  onSelect,
-}: {
-  item: Pick<HoldingSummaryItem, "name" | "code" | "iconUrl">;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className="-m-1 flex min-w-0 items-center gap-2 rounded-lg p-1 text-left transition hover:bg-[#fff8e1] focus-ring"
-      aria-label={`${item.name} 주문 화면 열기`}
-      title={`${item.name} 주문 화면 열기`}
-    >
-      <span className="relative flex h-8 w-8 flex-none items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-[#f8fafc] text-[10px] font-black text-[#071832]">
-        <span aria-hidden={Boolean(item.iconUrl)}>{item.name.slice(0, 1)}</span>
-        {item.iconUrl ? (
-          <span
-            className="absolute h-6 w-6 rounded bg-[#f8fafc] bg-contain bg-center bg-no-repeat"
-            style={{ backgroundImage: `url(${item.iconUrl})` }}
-            aria-label={item.name}
-          />
-        ) : null}
-      </span>
-      <span className="min-w-0">
-        <span className="block truncate text-xs font-extrabold text-[#071832]">{item.name}</span>
-        <span className="block text-[11px] font-semibold text-slate-500">{item.code}</span>
-      </span>
-    </button>
-  );
-}
+function summarizeBalance(balance: Balance | null | undefined, holdings: Holding[]) {
+  const purchaseAmount =
+    balance?.purchase_amount ??
+    holdings.reduce((sum, item) => sum + (item.purchase_amount ?? item.avg_price * item.quantity), 0);
+  const evalAmount = balance?.eval_amount ?? holdings.reduce((sum, item) => sum + item.eval_amount, 0);
+  const profitLoss = balance?.profit_loss ?? holdings.reduce((sum, item) => sum + item.profit_loss, 0);
+  const profitRate = balance?.profit_rate ?? (purchaseAmount > 0 ? (profitLoss / purchaseAmount) * 100 : 0);
+  const deposit = balance?.deposit ?? 0;
 
-function changeValueClass(value: string) {
-  if (value.startsWith("+")) return "text-profit";
-  if (value.startsWith("-")) return "text-loss";
-  return "text-slate-500";
-}
-
-function holdingAiComment(item: HoldingSummaryItem) {
-  if (item.profitLossRate.startsWith("-")) {
-    return "손실 구간입니다. 비중 확대보다 손절 기준과 반등 신호를 먼저 확인하세요.";
-  }
-  if (item.todayChangeRate.startsWith("-")) {
-    return "누적 수익은 유지 중이나 단기 약세입니다. 분할 대응과 지지선 확인이 필요합니다.";
-  }
-  return "수익 구간이 양호합니다. 목표 비중을 넘으면 일부 차익 실현을 검토하세요.";
-}
-
-function holdingNewsInfo(item: HoldingSummaryItem) {
-  const newsByCode: Record<string, { title: string; url: string }> = {
-    "005930": {
-      title: "삼성전자, 반도체 수요 회복 기대 속 실적 개선 전망",
-      url: "https://finance.naver.com/item/news.naver?code=005930",
-    },
-    "035420": {
-      title: "NAVER, AI 검색과 커머스 성장성이 하반기 관전 포인트",
-      url: "https://finance.naver.com/item/news.naver?code=035420",
-    },
-    "373220": {
-      title: "LG에너지솔루션, 배터리 업황 반등 기대와 수주 흐름 주목",
-      url: "https://finance.naver.com/item/news.naver?code=373220",
-    },
-  };
-
-  return newsByCode[item.code] ?? {
-    title: `${item.name} 관련 주요 뉴스 보기`,
-    url: `https://finance.naver.com/item/news.naver?code=${item.code}`,
+  return {
+    totalEval: balance?.total_eval ?? evalAmount + deposit,
+    evalAmount,
+    deposit,
+    profitLoss,
+    profitRate,
   };
 }
 
-function AiCommentModal({
-  item,
-  comment,
-  onClose,
+function BalanceStrip({
+  summary,
 }: {
-  item: HoldingSummaryItem;
-  comment: string;
-  onClose: () => void;
+  summary: ReturnType<typeof summarizeBalance>;
 }) {
+  const profitTone = getNumberTone(summary.profitLoss);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" role="dialog" aria-modal="true" aria-labelledby="holding-ai-comment-title">
-      <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
-          <div className="min-w-0">
-            <p className="text-xs font-bold text-slate-500">AI 코멘트</p>
-            <h2 id="holding-ai-comment-title" className="mt-1 truncate text-lg font-black text-[#071832]">
-              {item.name}
-            </h2>
-            <p className="mt-1 font-mono text-xs font-semibold text-slate-500">{item.code}</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-8 w-8 flex-none items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-[#071832] focus-ring"
-            aria-label="AI 코멘트 닫기"
-            title="닫기"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
-        <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
-          <MetricPill label="평가손익" value={item.profitLossAmount} tone={changeValueClass(item.profitLossAmount)} />
-          <MetricPill label="수익률" value={item.profitLossRate} tone={changeValueClass(item.profitLossRate)} />
-          <MetricPill label="오늘 등락률" value={item.todayChangeRate} tone={changeValueClass(item.todayChangeRate)} />
-        </div>
-        <div className="mt-4 rounded-lg border border-slate-100 bg-[#f8fafc] p-4">
-          <p className="text-sm font-semibold leading-7 text-slate-700">{comment}</p>
-        </div>
-        <div className="mt-4 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 items-center justify-center rounded-lg bg-[#071832] px-4 text-sm font-extrabold text-white transition hover:bg-[#102a56] focus-ring"
-          >
-            닫기
-          </button>
-        </div>
-      </div>
+    <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <SummaryPill label="총자산평가" value={formatWon(summary.totalEval)} strong />
+      <SummaryPill label="평가금액" value={formatWon(summary.evalAmount)} />
+      <SummaryPill label="예수금" value={formatWon(summary.deposit)} />
+      <SummaryPill
+        label="평가손익"
+        value={`${formatSignedWon(summary.profitLoss)} (${formatPercent(summary.profitRate)})`}
+        tone={profitTone}
+      />
     </div>
   );
 }
 
-function MetricPill({ label, value, tone }: { label: string; value: string; tone: string }) {
+function SummaryPill({
+  label,
+  value,
+  tone = "neutral",
+  strong = false,
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "profit" | "loss";
+  strong?: boolean;
+}) {
   return (
-    <div className="rounded-lg border border-slate-100 px-3 py-2">
+    <div className="rounded-lg border border-slate-100 bg-[#f8fafc] p-3">
       <p className="text-[11px] font-bold text-slate-500">{label}</p>
-      <p className={`mt-1 text-sm font-extrabold tabular-nums ${tone}`}>{value}</p>
+      <p
+        className={cn(
+          "mt-1 truncate font-black tabular-nums tracking-normal",
+          strong ? "text-lg" : "text-sm",
+          tone === "profit" && "text-profit",
+          tone === "loss" && "text-loss",
+          tone === "neutral" && "text-[#071832]"
+        )}
+      >
+        {value}
+      </p>
     </div>
   );
+}
+
+function HoldingsSummaryTable({ holdings }: { holdings: Holding[] }) {
+  if (holdings.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 py-12 text-slate-400">
+        <Wallet className="mb-3 h-12 w-12 opacity-30" aria-hidden="true" />
+        <p className="text-sm font-bold">조회된 보유잔고가 없습니다.</p>
+        <p className="mt-2 text-xs font-semibold">총 평가 0원 · 손익 0원 (0.00%)</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-100">
+      <table className="min-w-[920px] w-full border-collapse text-left text-sm">
+        <thead className="bg-[#f8fafc] text-xs font-black text-slate-500">
+          <tr>
+            <th className="px-4 py-3">종목</th>
+            <th className="px-3 py-3 text-right">보유수량</th>
+            <th className="px-3 py-3 text-right">주문가능</th>
+            <th className="px-3 py-3 text-right">평균단가</th>
+            <th className="px-3 py-3 text-right">현재가</th>
+            <th className="px-3 py-3 text-right">매입금액</th>
+            <th className="px-3 py-3 text-right">평가금액</th>
+            <th className="px-4 py-3 text-right">평가손익</th>
+          </tr>
+        </thead>
+        <tbody>
+          {holdings.map((holding) => (
+            <HoldingRow key={`${holding.stock_code}-${holding.stock_name}`} holding={holding} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HoldingRow({ holding }: { holding: Holding }) {
+  const profitTone = getNumberTone(holding.profit_loss);
+  const purchaseAmount = holding.purchase_amount ?? holding.avg_price * holding.quantity;
+  const normalizedCode = normalizeStockCode(holding.stock_code);
+
+  return (
+    <tr className="border-t border-slate-100 transition hover:bg-[#fff8e1]">
+      <td className="px-4 py-3">
+        <Link
+          href={getOrderHref(holding.stock_code)}
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent("recent-stock-selected", { detail: { id: normalizedCode, orderSide: "buy" } }));
+          }}
+          className="-m-1 flex min-w-0 items-center gap-3 rounded-lg p-1 text-left transition hover:bg-white focus-ring"
+          aria-label={`${holding.stock_name} 매수 화면으로 이동`}
+        >
+          <StockLogo holding={holding} />
+          <span className="min-w-0">
+            <span className="block truncate font-extrabold text-[#071832]">{holding.stock_name}</span>
+            <span className="mt-1 block font-mono text-xs font-semibold text-slate-500">{normalizedCode}</span>
+          </span>
+        </Link>
+      </td>
+      <td className="px-3 py-3 text-right font-bold tabular-nums text-[#071832]">
+        {holding.quantity.toLocaleString("ko-KR")}주
+      </td>
+      <td className="px-3 py-3 text-right font-bold tabular-nums text-[#071832]">
+        {Number(holding.orderable_quantity ?? holding.quantity).toLocaleString("ko-KR")}주
+      </td>
+      <td className="px-3 py-3 text-right font-bold tabular-nums text-[#071832]">{formatWon(holding.avg_price)}</td>
+      <td className="px-3 py-3 text-right font-bold tabular-nums text-[#071832]">{formatWon(holding.current_price)}</td>
+      <td className="px-3 py-3 text-right font-bold tabular-nums text-[#071832]">{formatWon(purchaseAmount)}</td>
+      <td className="px-3 py-3 text-right font-bold tabular-nums text-[#071832]">{formatWon(holding.eval_amount)}</td>
+      <td className={cn("px-4 py-3 text-right font-black tabular-nums", toneClass(profitTone))}>
+        <div className="flex items-center justify-end gap-1">
+          {holding.profit_loss > 0 && <TrendingUp className="h-4 w-4" aria-hidden="true" />}
+          {holding.profit_loss < 0 && <TrendingDown className="h-4 w-4" aria-hidden="true" />}
+          <span>{formatSignedWon(holding.profit_loss)}</span>
+        </div>
+        <p className="mt-1 text-xs">{formatPercent(holding.profit_rate)}</p>
+      </td>
+    </tr>
+  );
+}
+
+function StockLogo({ holding }: { holding: Holding }) {
+  const iconUrl = getStockIconUrl(holding.stock_code);
+  return (
+    <span className="relative flex h-8 w-8 flex-none items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-[#f8fafc] text-xs font-black text-[#071832]">
+      <span aria-hidden={Boolean(iconUrl)}>{holding.stock_name.slice(0, 1)}</span>
+      {iconUrl ? (
+        <span
+          className="absolute h-6 w-6 rounded bg-white bg-contain bg-center bg-no-repeat"
+          style={{ backgroundImage: `url(${iconUrl})` }}
+          aria-label={holding.stock_name}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function formatWon(value: number) {
+  return `${Math.round(value).toLocaleString("ko-KR")}원`;
+}
+
+function formatSignedWon(value: number) {
+  if (Math.round(value) === 0) return "0원";
+  return `${value >= 0 ? "+" : "-"}${Math.abs(Math.round(value)).toLocaleString("ko-KR")}원`;
+}
+
+function formatPercent(value: number) {
+  if (value === 0) return "0.00%";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function getNumberTone(value: number): "neutral" | "profit" | "loss" {
+  if (value > 0) return "profit";
+  if (value < 0) return "loss";
+  return "neutral";
+}
+
+function toneClass(tone: "neutral" | "profit" | "loss") {
+  if (tone === "profit") return "text-profit";
+  if (tone === "loss") return "text-loss";
+  return "text-[#071832]";
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

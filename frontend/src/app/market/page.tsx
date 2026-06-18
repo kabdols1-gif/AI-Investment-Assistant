@@ -4,6 +4,9 @@ import { useMemo, useState } from "react";
 import { BarChart3, ChevronRight, Coins, DollarSign, Droplet, Flag, Fuel, Globe2, Landmark, Star, type LucideIcon } from "lucide-react";
 import { LightweightAreaChart, LightweightHistogramChart, LightweightMultiLineChart } from "@/components/charts/LightweightCharts";
 import { AppShell } from "@/components/layout";
+import { useMarketQuotes } from "@/hooks";
+import type { PriceData } from "@/lib/api/market";
+import { formatQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
 import type { MarketTone } from "@/lib/mockData";
 
 type MarketTab = "domestic" | "us" | "global" | "indicators";
@@ -300,8 +303,9 @@ const etfThemes = [
 export default function MarketPage() {
   const [activeTab, setActiveTab] = useState<MarketTab>("domestic");
   const selectedCards = activeTab === "us" ? usCards : activeTab === "global" ? globalCards : activeTab === "indicators" ? indicatorCards : domesticCards;
-  const upCount = selectedCards.filter((item) => item.tone === "up").length;
-  const downCount = selectedCards.filter((item) => item.tone === "down").length;
+  const displaySelectedCards = selectedCards.map(toPendingIndexCard);
+  const upCount = displaySelectedCards.filter((item) => item.tone === "up").length;
+  const downCount = displaySelectedCards.filter((item) => item.tone === "down").length;
 
   return (
     <AppShell screen="market">
@@ -408,9 +412,11 @@ function IndicatorMarket() {
 }
 
 function IndexGrid({ items }: { items: { name: string; value: string; change: string; tone: MarketTone; meta: string; series: number[] }[] }) {
+  const displayItems = items.map(toPendingIndexCard);
+
   return (
     <section className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
-      {items.map((item) => (
+      {displayItems.map((item) => (
         <article key={item.name} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2">
             <Globe2 className="h-4 w-4 text-[#0f4c81]" aria-hidden="true" />
@@ -428,6 +434,8 @@ function IndexGrid({ items }: { items: { name: string; value: string; change: st
 
 function StockRanking({ title, rows, filters }: { title: string; rows: MarketRow[]; filters: string[] }) {
   const [activeFilter, setActiveFilter] = useState(filters[Math.min(4, filters.length - 1)]);
+  const { quotes } = useMarketQuotes(rows.map((row) => row.code));
+  const displayRows = rows.map((row) => applyQuoteToMarketRow(row, quotes));
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -464,7 +472,7 @@ function StockRanking({ title, rows, filters }: { title: string; rows: MarketRow
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => (
+            {displayRows.map((row, index) => (
               <tr key={`${row.name}-${row.code}`} className="border-b border-slate-100 last:border-b-0">
                 <td className="px-2 py-3 text-center">
                   <button type="button" className="inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-[#fff8e1] hover:text-[#8a6400] focus-ring" aria-label={`${row.name} 즐겨찾기`}>
@@ -778,6 +786,8 @@ function InvestorRankingTable({
   title: string;
   rows: { name: string; price: string; change: string; volume: string; tone: MarketTone; mark: string }[];
 }) {
+  const displayRows = rows.map(toPendingInvestorRankingRow);
+
   return (
     <div>
       <div className="mb-2 flex items-center gap-1">
@@ -796,7 +806,7 @@ function InvestorRankingTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => (
+            {displayRows.map((row, index) => (
               <tr key={`${title}-${row.name}`} className="border-b border-slate-100 last:border-b-0">
                 <td className="py-2 text-center font-black text-[#071832]">{index + 1}</td>
                 <td className="py-2">
@@ -862,7 +872,7 @@ function EtfThemeSection() {
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0f4c81] text-xs font-black text-white">ETF</span>
                     <span className="font-extrabold text-[#071832]">{symbol}</span>
                   </span>
-                  <span className={index === 0 ? "text-profit" : "text-loss"}>{index === 0 ? "+0.53%" : "-4.80%"}</span>
+                  <span className="text-slate-500">0%</span>
                 </div>
               ))}
             </div>
@@ -875,6 +885,8 @@ function EtfThemeSection() {
 }
 
 function IndicatorTable({ title, rows }: { title: string; rows: IndicatorRow[] }) {
+  const displayRows = rows.map(toPendingIndicatorRow);
+
   return (
     <section className="min-w-0 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <h2 className="text-2xl font-black text-[#071832]">{title}</h2>
@@ -889,7 +901,7 @@ function IndicatorTable({ title, rows }: { title: string; rows: IndicatorRow[] }
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {displayRows.map((row) => (
               <tr key={row.name} className="border-b border-slate-100 last:border-b-0">
                 <td className="py-3 pr-3">
                   <span className="flex min-w-0 items-center gap-2">
@@ -927,6 +939,48 @@ function IndicatorItemIcon({ icon }: { icon: IndicatorRow["icon"] }) {
       <span className="mt-0.5 text-[8px] font-black leading-none tracking-normal">{icon.label}</span>
     </span>
   );
+}
+
+function toPendingIndexCard<T extends { value: string; change: string; tone: MarketTone; series: number[] }>(item: T): T {
+  return {
+    ...item,
+    value: "0",
+    change: "0%",
+    tone: "neutral",
+    series: item.series.map(() => 0),
+  };
+}
+
+function applyQuoteToMarketRow(row: MarketRow, quotes: Record<string, PriceData | null | undefined>): MarketRow {
+  const quote = formatQuoteDisplay(getQuoteFromMap(quotes, row.code));
+  return {
+    ...row,
+    price: quote.price,
+    change: quote.changeRate,
+    volume: quote.volume,
+    tradingValue: quote.tradingValue,
+    marketCap: "0",
+    tone: quote.marketTone,
+  };
+}
+
+function toPendingInvestorRankingRow(row: { name: string; price: string; change: string; volume: string; tone: MarketTone; mark: string }) {
+  return {
+    ...row,
+    price: "0",
+    change: "0%",
+    volume: "0",
+    tone: "neutral" as const,
+  };
+}
+
+function toPendingIndicatorRow(row: IndicatorRow): IndicatorRow {
+  return {
+    ...row,
+    value: "0",
+    change: "0%",
+    tone: "neutral",
+  };
 }
 
 function StatusTile({ label, value, tone }: { label: string; value: string; tone: MarketTone }) {

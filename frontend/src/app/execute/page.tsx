@@ -14,7 +14,7 @@ import {
 import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
 import { useAuth, useAccount, useStrategyExecutor, useOrder, useConfigStatus } from "@/hooks";
 import {
-  getCurrentPrice,
+  getKbCurrentPrice,
   getBuyableAmount,
   getPendingOrders,
   cancelOrder,
@@ -23,6 +23,7 @@ import {
   type PendingOrder,
   type CancelOrderRequest,
 } from "@/lib/api";
+import { normalizeStockCode } from "@/lib/accountHoldings";
 import { getBrokerProviderOption } from "@/lib/brokerProviders";
 import { isBrokerConnected } from "@/lib/configStatus";
 import type { SignalResult } from "@/types/signal";
@@ -32,7 +33,7 @@ import type { BuyableInfo } from "@/types/account";
 export default function ExecutePage() {
   const { status: authStatus } = useAuth();
   const { status: configStatus } = useConfigStatus();
-  const { holdings, balance, fetchHoldings, fetchBalance, resetThrottle, isLoading: accountLoading } = useAccount();
+  const { holdings, balance, fetchBalance, resetThrottle, isLoading: accountLoading } = useAccount();
   const {
     strategies,
     selectedStrategy,
@@ -70,11 +71,19 @@ export default function ExecutePage() {
   const brokerOption = getBrokerProviderOption(configStatus.broker_provider);
   const brokerConnected = isBrokerConnected(configStatus);
 
-  // Fetch holdings, balance, and pending orders when authenticated
+  useEffect(() => {
+    const selectedStockFromUrl = normalizeStockCode(new URLSearchParams(window.location.search).get("stock") ?? "");
+    if (!/^\d{6}$/.test(selectedStockFromUrl)) return;
+    setStocks((current) => {
+      if (current.includes(selectedStockFromUrl)) return current;
+      return [selectedStockFromUrl, ...current];
+    });
+  }, []);
+
+  // Fetch balance and pending orders when authenticated
   // 순차 호출: 모의투자 모드의 초당 요청 제한 준수
   useEffect(() => {
     const fetchSequentially = async () => {
-      await fetchHoldings();
       await fetchBalance();
       await fetchPendingOrders();
     };
@@ -97,10 +106,9 @@ export default function ExecutePage() {
 
   const handleRefresh = useCallback(async () => {
     resetThrottle();
-    await fetchHoldings();
-    await fetchBalance();
+    await fetchBalance(true);
     await fetchPendingOrders();
-  }, [resetThrottle, fetchHoldings, fetchBalance, fetchPendingOrders]);
+  }, [resetThrottle, fetchBalance, fetchPendingOrders]);
 
   const handleCancelOrder = useCallback(async (request: CancelOrderRequest) => {
     try {
@@ -132,7 +140,7 @@ export default function ExecutePage() {
     if (signal.action === "BUY" || signal.action === "SELL") {
       // Fetch current price
       try {
-        const priceResponse = await getCurrentPrice(signal.code, authStatus.mode);
+        const priceResponse = await getKbCurrentPrice(signal.code, "real");
         if (priceResponse.status === "success" && priceResponse.data) {
           setPriceData(priceResponse.data);
         } else {
@@ -153,7 +161,7 @@ export default function ExecutePage() {
           setSellableQty(null);
         } else {
           setBuyableInfo(null);
-          const holding = holdings.find((h) => h.stock_code === signal.code);
+          const holding = holdings.find((h) => normalizeStockCode(h.stock_code) === normalizeStockCode(signal.code));
           setSellableQty(holding?.quantity ?? null);
         }
 

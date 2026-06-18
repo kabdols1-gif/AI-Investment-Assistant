@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, DragEvent as ReactDragEvent, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, DragEvent as ReactDragEvent, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   Bell,
   ChartCandlestick,
@@ -26,9 +26,11 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  ScrollText,
   Star,
   Sun,
   UserRound,
+  WalletCards,
   X,
 } from "lucide-react";
 import { RiskNotice } from "@/components/safety/RiskNotice";
@@ -37,6 +39,7 @@ import { BrokerConnectionNotice } from "@/components/settings/BrokerConnectionGa
 import { RecentViewedStocksBar } from "@/components/symbols";
 import { FloatingMicButton, VoiceInputModal } from "@/components/voice";
 import { useToast } from "@/components/ui";
+import { useMarketQuotes } from "@/hooks";
 import { CONFIG_STATUS_UPDATED_EVENT, setSharedConfigStatus } from "@/hooks/useConfigStatus";
 import { interpretVoice } from "@/lib/api/voice";
 import { getConfigStatus, saveKBConfig, saveLLMConfig } from "@/lib/api/config";
@@ -44,6 +47,7 @@ import { BROKER_PROVIDER_OPTIONS, getBrokerProviderOption } from "@/lib/brokerPr
 import { isBrokerConnected } from "@/lib/configStatus";
 import { coerceLLMProvider, DEFAULT_LLM_PROVIDER, getDefaultLLMModel, getLLMProviderOption, LLM_PROVIDER_OPTIONS } from "@/lib/llmProviders";
 import { marketOverview, recentViewedStocks, screenMeta, tradingWorkspaceByStockId, type MarketTone, type NavScreenKey, type ScreenKey } from "@/lib/mockData";
+import { formatQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
 import { getStoredNavOrder, LAST_SCREEN_STORAGE_KEY, normalizeNavOrder, PINNED_NAV_SCREEN, sanitizeLastScreenPath, saveNavOrder } from "@/lib/navigationPersistence";
 import type { BrokerProvider, ConfigStatus, LLMProvider } from "@/types/config";
 import type { RecentViewedStockItem } from "@/types/symbols";
@@ -51,12 +55,13 @@ import type { LLMIntent } from "@/types/voice";
 
 const iconMap = {
   dashboard: LayoutDashboard,
-  assets: Home,
+  assets: WalletCards,
   "my-strategy": ShieldCheck,
   market: ChartCandlestick,
   watchlist: Heart,
   portfolio: PieChart,
   notifications: Bell,
+  logs: ScrollText,
   settings: Settings,
 };
 
@@ -97,6 +102,7 @@ const persistentScreenByPathname: Partial<Record<string, ScreenKey>> = {
   "/settings": "settings",
   "/strategy": "strategy",
   "/notifications": "notifications",
+  "/logs": "logs",
   "/watchlist": "watchlist",
 };
 
@@ -368,11 +374,11 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
       id: stock.id,
       code: stock.code,
       name: stock.name,
-      price: stock.price,
-      changeRate: stock.changeRate,
-      changeDirection: stock.tone,
-      volume: stock.volume,
-      tradingValue: stock.tradingValue,
+      price: "0",
+      changeRate: "0%",
+      changeDirection: "neutral",
+      volume: "0",
+      tradingValue: "0",
       iconUrl: stock.iconUrl,
     };
   }, []);
@@ -637,6 +643,8 @@ function AppShellFrame({ screen, children, selectedStock }: AppShellProps) {
           <RealtimePopularPill onSelectStock={(id) => openStockWorkspace(id, { addToRecent: true })} />
 
           <MarketTicker />
+
+          <RuntimeEnvironmentBadge configStatus={configStatus} />
 
           <div className="flex flex-none items-center gap-2">
             <button
@@ -1010,6 +1018,36 @@ function ProviderLogo({
   );
 }
 
+function RuntimeEnvironmentBadge({ configStatus }: { configStatus: ConfigStatus | null }) {
+  const mode = configStatus?.runtime_mode ?? "development";
+  const isProduction = mode === "production";
+  const host = formatRuntimeHost(configStatus?.kb_b2c_token_base_url || configStatus?.kb_base_url);
+
+  return (
+    <div
+      className={`flex h-10 min-w-[58px] flex-none items-center justify-center gap-2 rounded-lg border px-2 text-xs font-black sm:px-3 ${
+        isProduction
+          ? "border-red-200 bg-red-50 text-red-700"
+          : "border-emerald-200 bg-emerald-50 text-emerald-700"
+      }`}
+      title={`Runtime: ${mode}${host ? ` / ${host}` : ""}`}
+      aria-label={`Current runtime environment: ${mode}`}
+    >
+      <span className="tracking-normal">{isProduction ? "PROD" : "DEV"}</span>
+      {host ? <span className="hidden max-w-[170px] truncate font-mono text-[11px] opacity-80 xl:inline">{host}</span> : null}
+    </div>
+  );
+}
+
+function formatRuntimeHost(value?: string | null) {
+  if (!value) return "";
+  try {
+    return new URL(value).host;
+  } catch {
+    return value.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  }
+}
+
 type PopularRankingItem = {
   id: string;
   rank: number;
@@ -1048,6 +1086,19 @@ const overseasPopularRankings: PopularRankingItem[] = [
 
 function RealtimePopularPill({ onSelectStock }: { onSelectStock: (id: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
+  const quoteCodes = useMemo(
+    () => [...domesticPopularRankings, ...overseasPopularRankings].map((item) => item.code),
+    []
+  );
+  const { quotes } = useMarketQuotes(quoteCodes);
+  const domesticItems = useMemo(
+    () => domesticPopularRankings.map((item) => applyQuoteToPopularItem(item, quotes)),
+    [quotes]
+  );
+  const overseasItems = useMemo(
+    () => overseasPopularRankings.map((item) => applyQuoteToPopularItem(item, quotes)),
+    [quotes]
+  );
 
   return (
     <div
@@ -1071,9 +1122,9 @@ function RealtimePopularPill({ onSelectStock }: { onSelectStock: (id: string) =>
     >
       <Flame className="h-4 w-4 text-red-500" aria-hidden="true" />
       <span className="text-xs font-black text-[#071832]">실시간인기</span>
-      <PopularTickerSection label="국내" item={domesticPopularRankings[0]} />
+      <PopularTickerSection label="국내" item={domesticItems[0]} />
       <span className="h-4 w-px bg-slate-200" aria-hidden="true" />
-      <PopularTickerSection label="해외" item={overseasPopularRankings[0]} />
+      <PopularTickerSection label="해외" item={overseasItems[0]} />
 
       <div className={`absolute left-0 top-full z-[90] pt-2 group-hover:block group-focus-within:block ${isOpen ? "block" : "hidden"}`}>
         <div className="w-[560px] rounded-lg border border-slate-200 bg-white p-3 shadow-2xl">
@@ -1082,8 +1133,8 @@ function RealtimePopularPill({ onSelectStock }: { onSelectStock: (id: string) =>
             <span className="text-[11px] font-bold text-slate-500">샘플 지연 데이터</span>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            <PopularRankingPanel title="국내" items={domesticPopularRankings} onSelectStock={onSelectStock} />
-            <PopularRankingPanel title="해외" items={overseasPopularRankings} onSelectStock={onSelectStock} />
+            <PopularRankingPanel title="국내" items={domesticItems} onSelectStock={onSelectStock} />
+            <PopularRankingPanel title="해외" items={overseasItems} onSelectStock={onSelectStock} />
           </div>
         </div>
       </div>
@@ -1142,6 +1193,16 @@ function PopularRankingPanel({
       </ol>
     </section>
   );
+}
+
+function applyQuoteToPopularItem(item: PopularRankingItem, quotes: Record<string, Parameters<typeof formatQuoteDisplay>[0]>): PopularRankingItem {
+  const quote = formatQuoteDisplay(getQuoteFromMap(quotes, item.code));
+  return {
+    ...item,
+    price: quote.price,
+    changeRate: quote.changeRate,
+    tone: quote.marketTone,
+  };
 }
 
 function PopularStockLogo({ item }: { item: PopularRankingItem }) {
@@ -1436,17 +1497,33 @@ function MarketTickerItem({
 }: {
   item: MarketOverviewItem;
 }) {
+  const displayItem = toPendingMarketOverviewItem(item);
   return (
     <div className="flex flex-none cursor-default items-center gap-2 whitespace-nowrap text-xs font-semibold">
-      <span className="text-slate-500">{item.label}</span>
-      <span className="font-extrabold tabular-nums text-[#071832]">{item.primary}</span>
-      <span className={`font-extrabold tabular-nums ${marketToneClass(item.tone)}`}>{item.change}</span>
-      <span className="hidden tabular-nums text-slate-500 md:inline">{item.secondary}</span>
+      <span className="text-slate-500">{displayItem.label}</span>
+      <span className="font-extrabold tabular-nums text-[#071832]">{displayItem.primary}</span>
+      <span className={`font-extrabold tabular-nums ${marketToneClass(displayItem.tone)}`}>{displayItem.change}</span>
+      <span className="hidden tabular-nums text-slate-500 md:inline">{displayItem.secondary}</span>
     </div>
   );
 }
 
 type MarketOverviewItem = (typeof marketOverview)[number];
+
+function toPendingMarketOverviewItem(item: MarketOverviewItem): MarketOverviewItem {
+  return {
+    ...item,
+    primary: replaceTrailingMarketValue(item.primary, "0"),
+    change: "0%",
+    secondary: replaceTrailingMarketValue(item.secondary, "0%"),
+    tone: "neutral",
+  };
+}
+
+function replaceTrailingMarketValue(value: string, fallback: string) {
+  const label = value.replace(/[-+₩$]?\d[\d,.$/%bp원\s-]*/g, "").trim();
+  return `${label || value.replace(/\s.*$/, "")} ${fallback}`;
+}
 
 type MarketBoardItem = MarketOverviewItem & {
   groupId?: string;
@@ -2447,7 +2524,7 @@ function MobileBottomNav({ onOpenVoice }: { onOpenVoice: () => void }) {
     { href: "/dashboard", label: "대시", icon: LayoutDashboard },
     { href: "/watchlist", label: "관심", icon: Heart },
     { href: "/my-strategy", label: "전략", icon: ShieldCheck },
-    { href: "/assets", label: "자산", icon: Home },
+    { href: "/assets", label: "자산", icon: WalletCards },
   ];
 
   return (

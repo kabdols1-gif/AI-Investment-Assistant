@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useMarketQuotes } from "@/hooks";
+import { formatQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
 import {
   readStoredWatchItems,
   WATCHLIST_STORAGE_EVENT,
@@ -10,6 +12,16 @@ import {
 
 export function HomeWatchlistSummary() {
   const [items, setItems] = useState<WatchItem[]>([]);
+  const { quotes } = useMarketQuotes(items.map((item) => item.symbol));
+  const displayItems = items.map((item) => {
+    const quote = formatQuoteDisplay(getQuoteFromMap(quotes, item.symbol));
+    return {
+      ...item,
+      price: quote.price,
+      changeRate: quote.changeRate,
+      volumeAmount: quote.tradingValue,
+    };
+  });
 
   useEffect(() => {
     const sync = () => setItems(readStoredWatchItems());
@@ -34,7 +46,7 @@ export function HomeWatchlistSummary() {
         </div>
         {items.length > 0 ? (
           <div className="space-y-3">
-            {items.slice(0, 3).map((item) => (
+            {displayItems.slice(0, 3).map((item) => (
               <div key={item.symbol} className="grid grid-cols-[1fr_auto] gap-3 rounded-lg border border-slate-100 p-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold text-[#071832]">{item.name}</p>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, Loader2, MessageSquareText, Plus, Search, Star, Trash2, X, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/layout";
+import { useMarketQuotes } from "@/hooks";
 import { useToast } from "@/components/ui";
 import {
   createWatchItemFromSymbol,
@@ -11,6 +12,7 @@ import {
   type WatchItem,
 } from "@/lib/watchlistStorage";
 import { tradingWorkspaceByStockId } from "@/lib/mockData";
+import { formatQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
 import type { Symbol as StockSymbol } from "@/types/symbols";
 
 const marketFilters = [
@@ -56,10 +58,15 @@ export default function WatchlistPage() {
   const [symbolSearchError, setSymbolSearchError] = useState("");
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [commentTarget, setCommentTarget] = useState<WatchItem | null>(null);
+  const { quotes } = useMarketQuotes(items.map((item) => item.symbol));
+  const displayItems = useMemo(
+    () => items.map((item) => applyQuoteToWatchItem(item, quotes)),
+    [items, quotes]
+  );
   const normalizedSearchText = searchText.trim().toLowerCase();
   const filteredItems = useMemo(
     () =>
-      items
+      displayItems
         .filter((item) => {
           const matchesMarket = marketFilter === "all" || item.market === marketFilter;
           const matchesTrend = matchesWatchTrend(item, trendFilter);
@@ -71,12 +78,12 @@ export default function WatchlistPage() {
           return matchesMarket && matchesTrend && matchesSearch;
         })
         .sort((a, b) => Number(b.favorite) - Number(a.favorite)),
-    [items, marketFilter, normalizedSearchText, trendFilter]
+    [displayItems, marketFilter, normalizedSearchText, trendFilter]
   );
   const marketCounts = {
-    all: items.length,
-    domestic: items.filter((item) => item.market === "domestic").length,
-    overseas: items.filter((item) => item.market === "overseas").length,
+    all: displayItems.length,
+    domestic: displayItems.filter((item) => item.market === "domestic").length,
+    overseas: displayItems.filter((item) => item.market === "overseas").length,
   };
   const canSearchMaster = Boolean(normalizedSearchText);
   const visibleSymbolResults = canSearchMaster ? symbolResults : [];
@@ -218,7 +225,7 @@ export default function WatchlistPage() {
               {trendFilters.map((filter) => {
                 const isActive = trendFilter === filter.id;
                 const Icon = filter.icon;
-                const count = getTrendFilterCount(items, marketFilter, filter.id);
+                const count = getTrendFilterCount(displayItems, marketFilter, filter.id);
                 const isArrowOnlyFilter = filter.id !== "all";
                 return (
                   <button
@@ -523,6 +530,16 @@ function matchesWatchTrend(item: WatchItem, trendFilter: TrendFilter) {
   if (trendFilter === "up") return item.changeRate.startsWith("+");
   if (trendFilter === "down") return item.changeRate.startsWith("-");
   return true;
+}
+
+function applyQuoteToWatchItem(item: WatchItem, quotes: Record<string, Parameters<typeof formatQuoteDisplay>[0]>): WatchItem {
+  const quote = formatQuoteDisplay(getQuoteFromMap(quotes, item.symbol));
+  return {
+    ...item,
+    price: quote.price,
+    changeRate: quote.changeRate,
+    volumeAmount: quote.tradingValue,
+  };
 }
 
 function getWatchItemNews(item: WatchItem) {

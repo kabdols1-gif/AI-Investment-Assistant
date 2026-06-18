@@ -4,7 +4,9 @@ import Link from "next/link";
 import { DragEvent as ReactDragEvent, useCallback, useMemo, useState } from "react";
 import { ArrowRight, GripVertical, Heart, Home, PieChart, ShieldCheck, TrendingUp, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/layout";
-import { assetAllocation, assetSummary, holdingsSummaryItems, myStrategies, portfolioList, watchlistSummaryItems } from "@/lib/mockData";
+import { useMarketQuotes } from "@/hooks";
+import { formatQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
+import { assetAllocation, holdingsSummaryItems, myStrategies, portfolioList, watchlistSummaryItems } from "@/lib/mockData";
 
 const DASHBOARD_WIDGET_ORDER_STORAGE_KEY = "ai-investment-assistant.dashboard-widget-order.v1";
 
@@ -37,7 +39,7 @@ const dashboardWidgetMeta: Record<DashboardWidgetKey, DashboardWidgetMeta> = {
     title: "자산현황",
     href: "/assets",
     icon: Home,
-    summary: assetSummary.totalAsset,
+    summary: "0원",
     accentClass: "border-emerald-100 bg-emerald-50 text-emerald-600",
   },
   "my-strategy": {
@@ -222,8 +224,17 @@ function DashboardWidget({
 }
 
 function WatchlistWidgetBody() {
-  const risingCount = watchlistSummaryItems.filter((item) => item.changeRate.startsWith("+")).length;
-  const fallingCount = watchlistSummaryItems.filter((item) => item.changeRate.startsWith("-")).length;
+  const { quotes } = useMarketQuotes(watchlistSummaryItems.map((item) => item.code));
+  const displayItems = watchlistSummaryItems.map((item) => {
+    const quote = formatQuoteDisplay(getQuoteFromMap(quotes, item.code));
+    return {
+      ...item,
+      currentPrice: `${quote.price}원`,
+      changeRate: quote.changeRate,
+    };
+  });
+  const risingCount = displayItems.filter((item) => item.changeRate.startsWith("+")).length;
+  const fallingCount = displayItems.filter((item) => item.changeRate.startsWith("-")).length;
 
   return (
     <div className="flex h-full flex-col">
@@ -233,7 +244,7 @@ function WatchlistWidgetBody() {
         <SummaryMetric label="하락" value={`${fallingCount}`} tone="loss" />
       </div>
       <div className="mt-4 divide-y divide-slate-100">
-        {watchlistSummaryItems.slice(0, 4).map((item) => (
+        {displayItems.slice(0, 4).map((item) => (
           <div key={item.id} className="grid grid-cols-[1fr_auto] gap-3 py-3">
             <div className="min-w-0">
               <p className="truncate text-sm font-black text-[#071832]">{item.name}</p>
@@ -254,13 +265,13 @@ function AssetsWidgetBody() {
   return (
     <div className="flex h-full flex-col">
       <div className="grid grid-cols-2 gap-2">
-        <SummaryMetric label="오늘 손익" value={assetSummary.todayProfitRate} tone="profit" />
-        <SummaryMetric label="누적 수익률" value={assetSummary.cumulativeReturn} tone="profit" />
+        <SummaryMetric label="오늘 손익" value="0%" />
+        <SummaryMetric label="누적 수익률" value="0%" />
       </div>
       <div className="mt-5 rounded-lg bg-[#f8fafc] p-4">
         <p className="text-xs font-extrabold text-slate-500">총 자산</p>
-        <p className="mt-2 text-2xl font-black tracking-normal text-[#071832]">{assetSummary.totalAsset}</p>
-        <p className="mt-1 text-sm font-extrabold text-profit">{assetSummary.todayProfit}</p>
+        <p className="mt-2 text-2xl font-black tracking-normal text-[#071832]">0원</p>
+        <p className="mt-1 text-sm font-extrabold text-[#071832]">0원</p>
       </div>
       <div className="mt-4 space-y-3">
         {assetAllocation.map((item) => (
@@ -302,7 +313,7 @@ function StrategyWidgetBody() {
             <div className="mt-2 grid grid-cols-3 gap-2 text-xs font-bold text-slate-500">
               <span className="truncate">{strategy.target}</span>
               <span>{strategy.risk}</span>
-              <span className={`text-right font-black ${changeToneClass(strategy.returnRate)}`}>{strategy.returnRate}</span>
+              <span className="text-right font-black text-[#071832]">0%</span>
             </div>
           </div>
         ))}
@@ -312,7 +323,7 @@ function StrategyWidgetBody() {
 }
 
 function PortfolioWidgetBody() {
-  const positiveCount = portfolioList.filter((portfolio) => portfolio.returnRate.startsWith("+")).length;
+  const positiveCount = 0;
 
   return (
     <div className="flex h-full flex-col">
@@ -328,14 +339,14 @@ function PortfolioWidgetBody() {
               <p className="truncate text-sm font-black text-[#071832]">{portfolio.name}</p>
               <p className="mt-1 text-xs font-bold text-slate-500">비중 {portfolio.weight}</p>
             </div>
-            <p className="text-right text-sm font-extrabold text-slate-600">{portfolio.value}</p>
-            <p className={`text-right text-sm font-black ${changeToneClass(portfolio.returnRate)}`}>{portfolio.returnRate}</p>
+            <p className="text-right text-sm font-extrabold text-slate-600">0원</p>
+            <p className="text-right text-sm font-black text-[#071832]">0%</p>
           </div>
         ))}
       </div>
       <div className="mt-auto flex items-center gap-2 pt-4 text-sm font-extrabold text-[#071832]">
         <TrendingUp className="h-4 w-4 text-profit" aria-hidden="true" />
-        <span>대표 포트 {portfolioList[0]?.returnRate ?? "-"}</span>
+        <span>대표 포트 0%</span>
       </div>
     </div>
   );

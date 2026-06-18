@@ -10,6 +10,9 @@ import {
   getExecutionSummary,
   type StrategyExecutionConfig,
 } from "@/components/strategy/StrategyExecutionConfigurator";
+import { useMarketQuotes } from "@/hooks";
+import type { PriceData } from "@/lib/api/market";
+import { formatQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
 import { useToast } from "@/components/ui";
 import { myStrategies } from "@/lib/mockData";
 
@@ -54,9 +57,9 @@ type StrategyDraft = {
 type StrategyWizardMode = "create" | "edit";
 
 const recommendedHoldings: StrategyHolding[] = [
-  { name: "삼성전자", ticker: "005930", price: "66,200", weight: 40 },
-  { name: "SK하이닉스", ticker: "000660", price: "193,500", weight: 35 },
-  { name: "현금성", ticker: "CASH", price: "-", weight: 25 },
+  { name: "삼성전자", ticker: "005930", price: "0", weight: 40 },
+  { name: "SK하이닉스", ticker: "000660", price: "0", weight: 35 },
+  { name: "현금성", ticker: "CASH", price: "0", weight: 25 },
 ];
 
 const initialStrategies: StrategyItem[] = myStrategies.map((strategy, index) => ({
@@ -74,15 +77,15 @@ const initialStrategies: StrategyItem[] = myStrategies.map((strategy, index) => 
   composition:
     index === 0
       ? [
-          { name: "고배당 종목", ticker: "DIV", price: "-", weight: 40 },
-          { name: "실적 안정주", ticker: "CORE", price: "-", weight: 35 },
-          { name: "현금성", ticker: "CASH", price: "-", weight: 25 },
+          { name: "고배당 종목", ticker: "DIV", price: "0", weight: 40 },
+          { name: "실적 안정주", ticker: "CORE", price: "0", weight: 35 },
+          { name: "현금성", ticker: "CASH", price: "0", weight: 25 },
         ]
       : index === 1
         ? recommendedHoldings
         : [
-            { name: "KOSPI200 과매도", ticker: "K200", price: "-", weight: 55 },
-            { name: "현금성", ticker: "CASH", price: "-", weight: 45 },
+            { name: "KOSPI200 과매도", ticker: "K200", price: "0", weight: 55 },
+            { name: "현금성", ticker: "CASH", price: "0", weight: 45 },
           ],
   alerts: index === 1 ? 1 : 0,
   execution: createDefaultExecutionConfig(
@@ -103,21 +106,37 @@ export default function MyStrategyPage() {
   const [draft, setDraft] = useState<StrategyDraft>(() => createDraftFromStrategy(initialStrategies[0]));
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardMode, setWizardMode] = useState<StrategyWizardMode>("create");
+  const quoteCodes = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...strategies.flatMap((strategy) => strategy.composition.map((holding) => holding.ticker)),
+          ...draft.holdings.map((holding) => holding.ticker),
+          ...recommendedHoldings.map((holding) => holding.ticker),
+        ])
+      ),
+    [draft.holdings, strategies]
+  );
+  const { quotes } = useMarketQuotes(quoteCodes);
+  const displayStrategies = useMemo(
+    () => strategies.map((strategy) => applyQuotesToStrategy(strategy, quotes)),
+    [quotes, strategies]
+  );
 
   const filteredStrategies = useMemo(
     () =>
-      strategies.filter((strategy) => {
+      displayStrategies.filter((strategy) => {
         if (activeFilter === "전체 전략") return true;
         if (activeFilter === "실행중") return strategy.enabled;
         if (activeFilter === "중지") return !strategy.enabled;
         return strategy.alerts > 0;
       }),
-    [activeFilter, strategies]
+    [activeFilter, displayStrategies]
   );
   const runningCount = strategies.filter((strategy) => strategy.enabled).length;
   const pausedCount = strategies.length - runningCount;
   const alertCount = strategies.reduce((sum, strategy) => sum + strategy.alerts, 0);
-  const selectedStrategy = strategies.find((strategy) => strategy.id === selectedStrategyId) ?? strategies[0];
+  const selectedStrategy = displayStrategies.find((strategy) => strategy.id === selectedStrategyId) ?? displayStrategies[0];
 
   const selectStrategy = (strategy: StrategyItem) => {
     setSelectedStrategyId(strategy.id);
@@ -312,6 +331,7 @@ export default function MyStrategyPage() {
         <StrategyWizard
           mode={wizardMode}
           draft={draft}
+          quotes={quotes}
           activeStep={activeStep}
           onClose={() => setIsWizardOpen(false)}
           onDraftChange={setDraft}
@@ -326,6 +346,7 @@ export default function MyStrategyPage() {
 function StrategyWizard({
   mode,
   draft,
+  quotes,
   activeStep,
   onClose,
   onDraftChange,
@@ -334,6 +355,7 @@ function StrategyWizard({
 }: {
   mode: StrategyWizardMode;
   draft: StrategyDraft;
+  quotes: Record<string, PriceData | null | undefined>;
   activeStep: number;
   onClose: () => void;
   onDraftChange: (draft: StrategyDraft) => void;
@@ -343,6 +365,14 @@ function StrategyWizard({
   const totalWeight = draft.holdings.reduce((sum, item) => sum + item.weight, 0);
   const isEditMode = mode === "edit";
   const executionSummary = getExecutionSummary(draft.execution);
+  const displayRecommendedHoldings = useMemo(
+    () => recommendedHoldings.map((holding) => applyQuoteToStrategyHolding(holding, quotes)),
+    [quotes]
+  );
+  const displayDraftHoldings = useMemo(
+    () => draft.holdings.map((holding) => applyQuoteToStrategyHolding(holding, quotes)),
+    [draft.holdings, quotes]
+  );
 
   const updateHolding = (index: number, patch: Partial<StrategyHolding>) => {
     onDraftChange({
@@ -423,7 +453,7 @@ function StrategyWizard({
               <div>
                 <p className="text-sm font-extrabold text-[#071832]">추천 종목</p>
                 <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                  {recommendedHoldings.map((holding) => (
+                  {displayRecommendedHoldings.map((holding) => (
                     <button
                       key={holding.ticker}
                       type="button"
@@ -451,7 +481,7 @@ function StrategyWizard({
                       </tr>
                     </thead>
                     <tbody>
-                      {draft.holdings.map((holding, index) => (
+                      {displayDraftHoldings.map((holding, index) => (
                         <tr key={`${holding.ticker}-${index}`} className="border-t border-slate-100">
                           <td className="px-3 py-2 font-extrabold text-[#071832]">{holding.name}</td>
                           <td className="px-3 py-2 font-bold text-slate-600">{holding.ticker}</td>
@@ -808,6 +838,27 @@ function AIComment({ children }: { children: ReactNode }) {
       <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">{children}</p>
     </div>
   );
+}
+
+function applyQuotesToStrategy(strategy: StrategyItem, quotes: Record<string, PriceData | null | undefined>): StrategyItem {
+  return {
+    ...strategy,
+    composition: strategy.composition.map((holding) => applyQuoteToStrategyHolding(holding, quotes)),
+  };
+}
+
+function applyQuoteToStrategyHolding(
+  holding: StrategyHolding,
+  quotes: Record<string, PriceData | null | undefined>
+): StrategyHolding {
+  if (holding.ticker === "CASH") {
+    return { ...holding, price: "0" };
+  }
+  const quote = formatQuoteDisplay(getQuoteFromMap(quotes, holding.ticker));
+  return {
+    ...holding,
+    price: quote.price,
+  };
 }
 
 function createEmptyDraft(): StrategyDraft {

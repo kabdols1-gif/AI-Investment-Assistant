@@ -69,6 +69,7 @@ def _default_config() -> dict[str, Any]:
             "scope": DEFAULT_SCOPE,
             "account": "",
             "product_code": "01",
+            "account_password": "",
             "ci_no": "",
             "ci_secret": "",
             "user_info": "",
@@ -81,6 +82,7 @@ def _default_config() -> dict[str, Any]:
             "scope": DEFAULT_SCOPE,
             "account": "",
             "product_code": "01",
+            "account_password": "",
             "ci_no": "",
             "ci_secret": "",
             "user_info": "",
@@ -135,6 +137,9 @@ def load_config() -> dict[str, Any]:
         cfg[mode]["account"] = os.getenv(f"{prefix}_ACCOUNT", cfg[mode]["account"])
         cfg[mode]["product_code"] = os.getenv(
             f"{prefix}_PRODUCT_CODE", cfg[mode].get("product_code", "01")
+        )
+        cfg[mode]["account_password"] = os.getenv(
+            f"{prefix}_ACCOUNT_PASSWORD", cfg[mode].get("account_password", "")
         )
         cfg[mode]["ci_no"] = os.getenv(f"{prefix}_CI_NO", cfg[mode]["ci_no"])
         cfg[mode]["ci_secret"] = os.getenv(f"{prefix}_CI_SECRET", cfg[mode]["ci_secret"])
@@ -234,6 +239,7 @@ def save_token(
     refresh_token: str = "",
     expires_in: int | str | None = None,
     mode: str = "vps",
+    grant_type: str = "client_credentials",
 ) -> None:
     _ensure_config_root()
     expires = datetime.now() + timedelta(seconds=int(expires_in or 3600))
@@ -244,6 +250,7 @@ def save_token(
                 "refresh_token": refresh_token,
                 "expires_at": expires.isoformat(),
                 "mode": _ui_mode(mode),
+                "grant_type": grant_type,
             },
             allow_unicode=True,
             sort_keys=False,
@@ -295,7 +302,12 @@ def delete_mode() -> None:
         pass
 
 
-def auth(svr: str = "vps", grant_type: str = "client_credentials", **kwargs) -> str:
+def auth(
+    svr: str = "vps",
+    grant_type: str = "client_credentials",
+    force_refresh: bool = False,
+    **kwargs,
+) -> str:
     """Authenticate with KB BaaS and initialize the runtime environment."""
     cfg = load_config()
     normalized = _normalize_mode(svr)
@@ -314,19 +326,26 @@ def auth(svr: str = "vps", grant_type: str = "client_credentials", **kwargs) -> 
         )
 
     saved = read_token_data()
-    if saved and saved.get("mode") == ui_mode:
+    saved_grant_type = saved.get("grant_type") if saved else None
+    saved_matches_grant = saved_grant_type == grant_type or (
+        grant_type == "client_credentials" and not saved_grant_type
+    )
+    if saved and not force_refresh and saved.get("mode") == ui_mode and saved_matches_grant:
         access_token = saved["access_token"]
         refresh_token = saved.get("refresh_token", "")
     else:
-        if grant_type != "client_credentials":
-            raise ValueError("Only client_credentials login is supported by this UI flow")
-        token_body = issue_client_credentials_token(normalized)
+        if grant_type == "client_credentials":
+            token_body = issue_client_credentials_token(normalized)
+        elif grant_type == "authorization_code":
+            token_body = issue_authorization_code_token(normalized)
+        else:
+            raise ValueError("grant_type must be client_credentials or authorization_code")
         access_token = token_body.get("access_token") or token_body.get("accessToken") or ""
         refresh_token = token_body.get("refresh_token") or token_body.get("refreshToken") or ""
         expires_in = token_body.get("expires_in") or token_body.get("expiresIn") or 3600
         if not access_token:
             raise ValueError(f"KB token response did not contain access_token: {token_body}")
-        save_token(access_token, refresh_token, expires_in, ui_mode)
+        save_token(access_token, refresh_token, expires_in, ui_mode, grant_type)
 
     global _TRENV, _is_paper
     _is_paper = ui_mode == "vps"
@@ -364,6 +383,33 @@ def issue_client_credentials_token(mode: str = "dev") -> dict[str, Any]:
     return _extract_body(_post("/baas/v2/baas_token_issue", payload, mode_cfg["base_url"]))
 
 
+def issue_authorization_code_token(
+    mode: str = "dev",
+    user_info_plain: str | None = None,
+) -> dict[str, Any]:
+    cfg = load_config()
+    normalized = _normalize_mode(mode)
+    mode_cfg = cfg[normalized]
+    auth_body = issue_authorization_code(normalized, user_info_plain)
+    code = auth_body.get("code") or auth_body.get("authorizationCode")
+    issue_no = auth_body.get("issueNo") or auth_body.get("issue_no")
+    if not code or not issue_no:
+        raise ValueError(f"KB auth issue response did not contain code/issueNo: {auth_body}")
+
+    payload = {
+        "dataHeader": _device_header(cfg),
+        "dataBody": {
+            "code": code,
+            "clientId": mode_cfg.get("client_id", ""),
+            "clientSecret": mode_cfg.get("client_secret", ""),
+            "grantType": "authorization_code",
+            "scope": mode_cfg.get("scope", DEFAULT_SCOPE),
+            "issueNo": issue_no,
+        },
+    }
+    return _extract_body(_post("/baas/v2/baas_token_issue", payload, mode_cfg["base_url"]))
+
+
 def refresh_token(mode: str | None = None) -> dict[str, Any]:
     cfg = load_config()
     token_data = read_token_data() or {}
@@ -388,8 +434,9 @@ def refresh_token(mode: str | None = None) -> dict[str, Any]:
     new_refresh = body.get("refresh_token") or body.get("refreshToken") or refresh
     expires = body.get("expires_in") or body.get("expiresIn") or 3600
     if access:
-        save_token(access, new_refresh, expires, ui_mode)
-        auth(ui_mode)
+        refreshed_grant_type = token_data.get("grant_type", "client_credentials")
+        save_token(access, new_refresh, expires, ui_mode, refreshed_grant_type)
+        auth(ui_mode, grant_type=refreshed_grant_type)
     return body
 
 

@@ -73,6 +73,7 @@ export {
 // Market
 export {
   getOrderbook,
+  getKbCurrentPrice,
   getCurrentPrice,
   type OrderbookData,
   type OrderbookResponse,
@@ -95,3 +96,10 @@ export {
   saveLLMConfig,
   saveKBConfig,
 } from "./config";
+
+// Logs
+export {
+  getOpenApiLogs,
+  type AuditLogRecord,
+  type OpenApiLogResponse,
+} from "./logs";

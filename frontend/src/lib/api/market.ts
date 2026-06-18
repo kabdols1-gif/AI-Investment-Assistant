@@ -54,9 +54,11 @@ export async function getOrderbook(
   return apiGet<OrderbookResponse>(`/api/market/orderbook/${stockCode}?env_dv=${envDv}`);
 }
 
-export async function getCurrentPrice(
+export async function getKbCurrentPrice(
   stockCode: string,
   envDv: string = "real"
 ): Promise<PriceResponse> {
   return apiGet<PriceResponse>(`/api/market/price/${stockCode}?env_dv=${envDv}`);
 }
+
+export const getCurrentPrice = getKbCurrentPrice;

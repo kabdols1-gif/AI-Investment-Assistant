@@ -16,10 +16,12 @@ import {
 import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
 import { LightweightCandlestickChart } from "@/components/charts/LightweightCharts";
 import { useToast } from "@/components/ui";
+import { useMarketQuotes } from "@/hooks";
 import { getWsBase } from "@/lib/api/client";
-import { getCurrentPrice, type PriceData } from "@/lib/api/market";
+import { getKbCurrentPrice, type PriceData } from "@/lib/api/market";
 import type { BrokerProviderOption } from "@/lib/brokerProviders";
 import { tradingWorkspaceByStockId, watchItems } from "@/lib/mockData";
+import { formatQuoteDisplay as formatSharedQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
 import { readStoredWatchItems, WATCHLIST_STORAGE_EVENT, type WatchItem } from "@/lib/watchlistStorage";
 import type {
   BalanceEvaluationRow,
@@ -70,7 +72,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   const [period, setPeriod] = useState("일");
   const [orderDraft, setOrderDraft] = useState({
     stockId: data.stock.id,
-    price: data.stock.price,
+    price: createPendingQuoteStock(data.stock).price,
     quantity: initialQuantity,
   });
   const [watchlistItems, setWatchlistItems] = useState<WatchItem[]>([]);
@@ -78,6 +80,11 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   const [liveStatus, setLiveStatus] = useState<LiveQuoteStatus>("idle");
   const [liveError, setLiveError] = useState<string | null>(null);
   const liveReconnectRef = useRef<number | null>(null);
+  const { quotes: watchlistQuotes } = useMarketQuotes(watchlistItems.map((item) => item.symbol));
+  const displayWatchlistItems = useMemo(
+    () => watchlistItems.map((item) => applyQuoteToWatchItem(item, watchlistQuotes)),
+    [watchlistItems, watchlistQuotes]
+  );
   const liveStock = useMemo(() => mergeLiveStock(data.stock, livePrice), [data.stock, livePrice]);
   const liveData = useMemo<TradingWorkspaceData>(() => ({ ...data, stock: liveStock }), [data, liveStock]);
   const draftPrice = orderDraft.stockId === liveData.stock.id ? orderDraft.price : liveData.stock.price;
@@ -111,7 +118,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
       if (!isActive) return;
       setLiveStatus((status) => (status === "connected" ? status : "loading"));
       try {
-        const response = await getCurrentPrice(stockCode, "real");
+        const response = await getKbCurrentPrice(stockCode, "real");
         if (!isActive) return;
         const snapshot = response.data;
         if (response.status === "success" && snapshot) {
@@ -144,11 +151,12 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
         try {
           const payload = JSON.parse(event.data) as {
             type?: string;
+            source?: string;
             status?: string;
             message?: string;
             data?: Partial<PriceData>;
           };
-          const nextPrice = payload.data;
+          const nextPrice = payload.data ? { ...payload.data, source: payload.source === "kis_realtime" ? "kis" : payload.data.source } : null;
           if (payload.type === "price" && nextPrice) {
             setLivePrice((current) => mergePriceData(current, nextPrice));
             setLiveStatus("connected");
@@ -196,7 +204,10 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
 
   useEffect(() => {
     setOrderDraft((current) => {
-      if (current.stockId !== data.stock.id || current.quantity !== "0") return current;
+      if (current.stockId !== data.stock.id) {
+        return { ...current, stockId: data.stock.id, price: liveData.stock.price };
+      }
+      if (current.quantity !== "0" && current.price !== "0") return current;
       return { ...current, price: liveData.stock.price };
     });
   }, [data.stock.id, liveData.stock.price]);
@@ -237,7 +248,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     setRatio("100%");
     setOrderDraft({
       stockId: stock.id,
-      price: stock.price,
+      price: createPendingQuoteStock(stock).price,
       quantity: getOrderQuantityFromBalance(row.quantity),
     });
     window.dispatchEvent(new CustomEvent("portfolio-stock-selected", { detail: { id: stock.id } }));
@@ -274,7 +285,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
               activeTab={leftInfoTab}
               data={liveData}
               livePrice={livePrice}
-              watchlistItems={watchlistItems}
+              watchlistItems={displayWatchlistItems}
               onSelectWatchItem={handleWatchItemSelect}
               onTabChange={setLeftInfoTab}
             />
@@ -320,7 +331,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
             </div>
             <div className="p-2">
               {bottomTab === "차트" && (
-                <ChartPanel candles={data.chartCandles} period={period} onPeriodChange={setPeriod} stockName={liveData.stock.name} />
+                <ChartPanel candles={data.chartCandles} period={period} onPeriodChange={setPeriod} stock={liveData.stock} />
               )}
               {bottomTab === "뉴스" && <NewsPanel stock={liveData.stock} />}
               {bottomTab !== "차트" && bottomTab !== "뉴스" && (
@@ -607,15 +618,15 @@ function CurrentPricePanel({ livePrice, stock }: { livePrice: PriceData | null; 
     ["등락률", stock.changeRate],
     ["거래량", stock.volume],
     ["거래대금", stock.tradingValue],
-    ["시가", formatOptionalPrice(livePrice?.open, "67,200")],
-    ["고가", formatOptionalPrice(livePrice?.high, "67,300")],
-    ["저가", formatOptionalPrice(livePrice?.low, "65,900")],
-    ["전일종가", formatOptionalPrice(livePrice?.previous_close, "67,230")],
-    ["52주 최고", formatOptionalPrice(livePrice?.w52_high, "88,800")],
-    ["52주 최저", formatOptionalPrice(livePrice?.w52_low, "62,100")],
-    ["시가총액", "395조"],
-    ["PER", "18.4배"],
-    ["PBR", "1.24배"],
+    ["시가", formatOptionalPrice(livePrice?.open, "0")],
+    ["고가", formatOptionalPrice(livePrice?.high, "0")],
+    ["저가", formatOptionalPrice(livePrice?.low, "0")],
+    ["전일종가", formatOptionalPrice(livePrice?.previous_close, "0")],
+    ["52주 최고", formatOptionalPrice(livePrice?.w52_high, "0")],
+    ["52주 최저", formatOptionalPrice(livePrice?.w52_low, "0")],
+    ["시가총액", "0"],
+    ["PER", "0"],
+    ["PBR", "0"],
   ];
 
   return (
@@ -643,6 +654,8 @@ function CurrentPricePanel({ livePrice, stock }: { livePrice: PriceData | null; 
 }
 
 function OrderBookPanel({ rows, currentPrice }: { rows: OrderBookRow[]; currentPrice: string }) {
+  const displayRows = rows.map((row) => toDisplayOrderBookRow(row, currentPrice));
+
   return (
     <div className="overflow-hidden">
       <div className="grid grid-cols-[0.7fr_1fr_0.8fr_0.9fr_1fr_0.7fr] border-b border-slate-100 bg-[#f8fafc] px-2 py-1.5 text-center text-[11px] font-extrabold text-slate-500">
@@ -654,8 +667,8 @@ function OrderBookPanel({ rows, currentPrice }: { rows: OrderBookRow[]; currentP
         <span>수량</span>
       </div>
       <div>
-        {rows.map((row, index) => {
-          const isCurrent = row.price === currentPrice;
+        {displayRows.map((row, index) => {
+          const isCurrent = currentPrice !== "0" && row.price === currentPrice;
           return (
             <div
               key={`${row.price}-${index}`}
@@ -663,7 +676,7 @@ function OrderBookPanel({ rows, currentPrice }: { rows: OrderBookRow[]; currentP
                 isCurrent ? "border-y border-[#1d4ed8] bg-blue-50" : index < 5 ? "bg-blue-50/35" : "bg-red-50/35"
               }`}
             >
-              <span className="text-slate-500">{index < 5 ? "" : "552"}</span>
+              <span className="text-slate-500">{index < 5 ? "" : "0"}</span>
               <span className="font-bold tabular-nums text-slate-600">{row.askQuantity ?? ""}</span>
               <span className={`font-black tabular-nums ${toneTextClass(row.tone)}`}>{row.price}</span>
               <span className={`font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.changeRate}</span>
@@ -674,15 +687,17 @@ function OrderBookPanel({ rows, currentPrice }: { rows: OrderBookRow[]; currentP
         })}
       </div>
       <div className="grid grid-cols-3 border-t border-slate-200 px-3 py-2 text-xs font-extrabold">
-        <span className="text-blue-600">총매도 2,568,934</span>
-        <span className="text-center text-blue-600">-1,030</span>
-        <span className="text-right text-red-500">총매수 2,093,416</span>
+        <span className="text-blue-600">총매도 0</span>
+        <span className="text-center text-slate-500">0</span>
+        <span className="text-right text-red-500">총매수 0</span>
       </div>
     </div>
   );
 }
 
 function ExecutionPanel({ rows }: { rows: ExecutionRow[] }) {
+  const displayRows = rows.map(toPendingExecutionRow);
+
   return (
     <div className="p-2">
       <div className="grid grid-cols-4 rounded-t-md bg-[#f8fafc] px-3 py-1.5 text-center text-xs font-extrabold text-slate-500">
@@ -691,7 +706,7 @@ function ExecutionPanel({ rows }: { rows: ExecutionRow[] }) {
         <span>대비</span>
         <span>체결량</span>
       </div>
-      {rows.map((row) => (
+      {displayRows.map((row) => (
         <div key={`${row.time}-${row.quantity}`} className="grid grid-cols-4 border-b border-slate-100 px-3 py-1.5 text-center text-xs">
           <span className="tabular-nums text-slate-500">{row.time}</span>
           <span className={`font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.price}</span>
@@ -704,6 +719,8 @@ function ExecutionPanel({ rows }: { rows: ExecutionRow[] }) {
 }
 
 function BrokerPanel({ rows }: { rows: BrokerTradeRow[] }) {
+  const displayRows = rows.map(toPendingBrokerTradeRow);
+
   return (
     <div className="p-2">
       <div className="grid grid-cols-[0.5fr_1.2fr_1fr_1fr_1fr] rounded-t-md bg-[#f8fafc] px-3 py-1.5 text-center text-xs font-extrabold text-slate-500">
@@ -713,7 +730,7 @@ function BrokerPanel({ rows }: { rows: BrokerTradeRow[] }) {
         <span>매도</span>
         <span>순매수</span>
       </div>
-      {rows.map((row) => (
+      {displayRows.map((row) => (
         <div key={row.rank} className="grid grid-cols-[0.5fr_1.2fr_1fr_1fr_1fr] border-b border-slate-100 px-3 py-1.5 text-center text-xs">
           <span className="font-bold text-slate-500">{row.rank}</span>
           <span className="font-extrabold text-[#071832]">{row.broker}</span>
@@ -796,7 +813,7 @@ function OrderFormPanel({
         <div className="grid grid-cols-[86px_1fr] items-center gap-2">
           <span className="text-xs font-extrabold text-[#071832]">계좌</span>
           <button type="button" className="flex h-8 items-center justify-between rounded-lg border border-slate-200 bg-white px-2 text-xs font-bold text-[#071832] focus-ring">
-            종합위탁 257-232-648
+            0
             <ChevronDown className="h-4 w-4 text-slate-500" aria-hidden="true" />
           </button>
         </div>
@@ -823,7 +840,7 @@ function OrderFormPanel({
 
         <div className="grid grid-cols-[86px_1fr_64px] items-center gap-2">
           <span className="text-xs font-extrabold text-[#071832]">주문가능금액</span>
-          <span className="text-right text-xs font-black tabular-nums text-[#071832]">123,000,000 원</span>
+          <span className="text-right text-xs font-black tabular-nums text-[#071832]">0</span>
           <button type="button" className="flex h-8 items-center justify-center gap-1 rounded-lg border border-slate-200 text-xs font-extrabold hover:bg-[#fff8e1] focus-ring">
             <Calculator className="h-4 w-4" aria-hidden="true" />
             계산기
@@ -834,7 +851,7 @@ function OrderFormPanel({
           <div className="grid grid-cols-[86px_1fr] items-center gap-2">
             <span className="text-xs font-extrabold text-[#071832]">원주문번호</span>
             <input
-              value="A20260607-093012"
+              value="0"
               readOnly
               className="h-8 rounded-lg border border-slate-200 bg-[#f8fafc] px-2 text-xs font-bold text-[#071832] outline-none"
             />
@@ -929,27 +946,21 @@ function StepperField({
 function ChartPanel({
   candles,
   period,
-  stockName,
+  stock,
   onPeriodChange,
 }: {
   candles: ChartCandle[];
   period: string;
-  stockName: string;
+  stock: TradingWorkspaceData["stock"];
   onPeriodChange: (period: string) => void;
 }) {
+  const livePrice = toNumber(stock.price);
+  const hasResolvedQuote = hasResolvedQuoteSource(stock.source);
+  const displayPrice = hasResolvedQuote ? stock.price : "0";
+  const displayChange = hasResolvedQuote ? `${stock.change} (${stock.changeRate})` : "0 (0%)";
   const periodCandles = useMemo(
-    () =>
-      expandCandles(
-        candles.map((candle, index) => ({
-          ...candle,
-          label: period === "?" || period === "?" || period === "?" ? candle.label : String(index + 1),
-          high: candle.high + periodOffset(period, index),
-          low: candle.low + periodOffset(period, index) / 2,
-          close: candle.close + periodOffset(period, index),
-        })),
-        4
-      ),
-    [candles, period]
+    () => buildDisplayCandles(candles, period, hasResolvedQuote ? livePrice : 0),
+    [candles, hasResolvedQuote, livePrice, period]
   );
 
   return (
@@ -979,24 +990,109 @@ function ChartPanel({
       </div>
 
       <div className="px-3 py-1.5 text-xs font-bold text-[#071832]">
-        {stockName} · {period} · KRX
-        <span className="ml-3 text-xs text-blue-600">시 67,200</span>
-        <span className="ml-2 text-xs text-blue-600">고 67,300</span>
-        <span className="ml-2 text-xs text-blue-600">저 65,900</span>
-        <span className="ml-2 text-xs text-blue-600">종 66,200</span>
-        <span className="ml-2 text-xs text-blue-600">▼ 1,030 (-1.53%)</span>
+        {stock.name} · {period} · KRX
+        <span className="ml-3 text-xs text-blue-600">시 {displayPrice}</span>
+        <span className="ml-2 text-xs text-blue-600">고 {displayPrice}</span>
+        <span className="ml-2 text-xs text-blue-600">저 {displayPrice}</span>
+        <span className="ml-2 text-xs text-blue-600">종 {displayPrice}</span>
+        <span className="ml-2 text-xs text-blue-600">{displayChange}</span>
       </div>
 
       <div className="px-2 pb-3">
-        <LightweightCandlestickChart candles={periodCandles} height={340} ariaLabel={stockName + " " + period + " candlestick chart"} />
+        <LightweightCandlestickChart candles={periodCandles} height={340} ariaLabel={stock.name + " " + period + " candlestick chart"} />
       </div>
     </div>
   );
 }
 
-function periodOffset(period: string, index: number) {
-  const scale = period === "1분" ? 35 : period === "5분" ? 55 : period === "15분" ? 75 : period === "30분" ? 90 : period === "주" ? 160 : period === "월" ? 220 : 120;
-  return Math.round(Math.sin(index * 0.9) * scale);
+function toDisplayOrderBookRow(row: OrderBookRow, currentPrice: string): OrderBookRow {
+  const displayPrice = currentPrice === "0" ? "0" : currentPrice;
+  return {
+    ...row,
+    askQuantity: row.askQuantity ? "0" : undefined,
+    price: displayPrice,
+    changeRate: "0%",
+    bidQuantity: row.bidQuantity ? "0" : undefined,
+    tone: "neutral",
+  };
+}
+
+function toPendingExecutionRow(row: ExecutionRow): ExecutionRow {
+  return {
+    ...row,
+    time: "0",
+    price: "0",
+    change: "0",
+    quantity: "0",
+    tone: "neutral",
+  };
+}
+
+function toPendingBrokerTradeRow(row: BrokerTradeRow): BrokerTradeRow {
+  return {
+    ...row,
+    buy: "0",
+    sell: "0",
+    net: "0",
+    tone: "neutral",
+  };
+}
+
+function toPendingCashRow(row: { label: string; value: string }) {
+  return {
+    ...row,
+    value: "0",
+  };
+}
+
+function toPendingOrderHistoryRow(row: OrderHistoryRow): OrderHistoryRow {
+  return {
+    ...row,
+    time: "0",
+    price: "0",
+    quantity: "0",
+    status: "0",
+  };
+}
+
+function toPendingProfitLossRow(row: ProfitLossSummary): ProfitLossSummary {
+  return {
+    ...row,
+    value: "0",
+    tone: "neutral",
+  };
+}
+
+function toPendingBalanceRow(row: BalanceEvaluationRow): BalanceEvaluationRow {
+  return {
+    ...row,
+    quantity: "0",
+    avgPrice: "0",
+    evalAmount: "0",
+    profitRate: "0%",
+    tone: "neutral",
+  };
+}
+
+function buildDisplayCandles(candles: ChartCandle[], period: string, price: number) {
+  const basePrice = Number.isFinite(price) && price > 0 ? price : 0;
+  const count = Math.max(candles.length, 8);
+  const flatCandles = Array.from({ length: count }, (_, index) => ({
+    label: candles[index]?.label ?? String(index + 1),
+    open: basePrice,
+    high: basePrice,
+    low: basePrice,
+    close: basePrice,
+    volume: 0,
+  }));
+
+  return expandCandles(
+    flatCandles.map((candle, index) => ({
+      ...candle,
+      label: period === "?" || period === "?" || period === "?" ? candle.label : String(index + 1),
+    })),
+    4
+  );
 }
 
 function expandCandles(candles: ChartCandle[], steps = 4): ChartCandle[] {
@@ -1041,81 +1137,12 @@ function lerp(start: number, end: number, ratio: number) {
   return start + (end - start) * ratio;
 }
 
-function CandleChart({ candles }: { candles: ChartCandle[] }) {
-  const min = Math.min(...candles.map((candle) => candle.low));
-  const max = Math.max(...candles.map((candle) => candle.high));
-  const volumeMax = Math.max(...candles.map((candle) => candle.volume));
-  const width = 920;
-  const height = 300;
-  const chartTop = 18;
-  const chartBottom = 224;
-  const volumeTop = 238;
-  const volumeHeight = 42;
-  const leftPadding = 16;
-  const rightPadding = 72;
-  const step = (width - leftPadding - rightPadding) / Math.max(candles.length - 1, 1);
-
-  const y = (price: number) => chartBottom - ((price - min) / (max - min)) * (chartBottom - chartTop);
-  const x = (index: number) => leftPadding + index * step;
-  const ma5 = movingAverage(candles.map((candle) => candle.close), 5);
-  const ma10 = movingAverage(candles.map((candle) => candle.close), 10);
-
-  return (
-    <div className="overflow-x-auto px-2 pb-3">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-[340px] min-w-[760px] w-full" role="img" aria-label="모의 캔들 차트">
-        {[0, 1, 2, 3].map((line) => {
-          const yPos = chartTop + ((chartBottom - chartTop) / 3) * line;
-          return <line key={line} x1={leftPadding} x2={width - rightPadding} y1={yPos} y2={yPos} stroke="#e5e7eb" strokeWidth="1" />;
-        })}
-        {[60000, 63000, 66000, 69000, 72000].map((price) => (
-          <text key={price} x={width - 60} y={y(price) + 4} fontSize="12" fontWeight="700" fill="#475569">
-            {price.toLocaleString("ko-KR")}
-          </text>
-        ))}
-        <path d={linePath(ma5, x, y)} fill="none" stroke="#f59e0b" strokeWidth="2" />
-        <path d={linePath(ma10, x, y)} fill="none" stroke="#d946ef" strokeWidth="2" />
-        {candles.map((candle, index) => {
-          const candleX = x(index);
-          const openY = y(candle.open);
-          const closeY = y(candle.close);
-          const highY = y(candle.high);
-          const lowY = y(candle.low);
-          const isUp = candle.close >= candle.open;
-          const color = isUp ? "#ef233c" : "#1d4ed8";
-          const bodyTop = Math.min(openY, closeY);
-          const bodyHeight = Math.max(Math.abs(closeY - openY), 3);
-          const volumeHeightValue = (candle.volume / volumeMax) * volumeHeight;
-
-          return (
-            <g key={`${candle.label}-${index}`}>
-              <line x1={candleX} x2={candleX} y1={highY} y2={lowY} stroke={color} strokeWidth="2" />
-              <rect x={candleX - 7} y={bodyTop} width="14" height={bodyHeight} rx="1" fill={color} />
-              <rect x={candleX - 8} y={volumeTop + volumeHeight - volumeHeightValue} width="16" height={volumeHeightValue} fill={isUp ? "#fca5a5" : "#93c5fd"} opacity="0.85" />
-              {candle.label && (
-                <text x={candleX} y={height - 8} textAnchor="middle" fontSize="12" fontWeight="700" fill="#475569">
-                  {candle.label}
-                </text>
-              )}
-            </g>
-          );
-        })}
-        <line x1={leftPadding} x2={width - rightPadding} y1={chartBottom} y2={chartBottom} stroke="#cbd5e1" />
-        <text x={leftPadding} y={volumeTop - 7} fontSize="12" fontWeight="700" fill="#1d4ed8">
-          거래량 (20) 11.68M 16.25M
-        </text>
-        <rect x={width - 74} y={y(66200) - 13} width="56" height="24" rx="4" fill="#1d4ed8" />
-        <text x={width - 46} y={y(66200) + 4} textAnchor="middle" fontSize="12" fontWeight="800" fill="#ffffff">
-          66,200
-        </text>
-      </svg>
-    </div>
-  );
-}
-
 function CashPanel({ rows }: { rows: { label: string; value: string }[] }) {
+  const displayRows = rows.map(toPendingCashRow);
+
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {rows.map((row) => (
+      {displayRows.map((row) => (
         <div key={row.label} className="rounded-lg border border-slate-200 bg-[#f8fafc] p-4">
           <p className="text-xs font-bold text-slate-500">{row.label}</p>
           <p className="mt-2 text-lg font-black tabular-nums text-[#071832]">{row.value}</p>
@@ -1132,15 +1159,17 @@ function OrderHistoryPanel({
   rows: OrderHistoryRow[];
   stock: TradingWorkspaceData["stock"];
 }) {
+  const displayRows = rows.map(toPendingOrderHistoryRow);
+
   return (
     <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <ListPanelHeader
         columns="grid-cols-[minmax(180px,1.35fr)_78px_78px_86px_78px_86px]"
         labels={["종목", "시간", "구분", "주문가격", "수량", "상태"]}
       />
-      {rows.map((row) => (
+      {displayRows.map((row, index) => (
         <div
-          key={`${stock.id}-${row.time}-${row.side}-${row.status}`}
+          key={`${stock.id}-${index}-${row.side}`}
           className="grid grid-cols-[minmax(180px,1.35fr)_78px_78px_86px_78px_86px] items-center border-t border-slate-100 px-3 py-3 text-sm"
         >
           <StockListIdentity name={stock.name} code={stock.code} iconUrl={stock.iconUrl} />
@@ -1164,13 +1193,15 @@ function ProfitLossPanel({
   rows: ProfitLossSummary[];
   stock: TradingWorkspaceData["stock"];
 }) {
+  const displayRows = rows.map(toPendingProfitLossRow);
+
   return (
     <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <ListPanelHeader
         columns="grid-cols-[minmax(180px,1.35fr)_minmax(120px,0.9fr)_120px_minmax(160px,1fr)]"
         labels={["종목", "손익 항목", "금액/수익률", "해석"]}
       />
-      {rows.map((row) => (
+      {displayRows.map((row) => (
         <div
           key={`${stock.id}-${row.label}`}
           className="grid grid-cols-[minmax(180px,1.35fr)_minmax(120px,0.9fr)_120px_minmax(160px,1fr)] items-center border-t border-slate-100 px-3 py-3 text-sm"
@@ -1192,20 +1223,26 @@ function BalancePanel({
   rows: BalanceEvaluationRow[];
   onSellStock: (row: BalanceEvaluationRow) => void;
 }) {
+  const displayRows = rows.map(toPendingBalanceRow);
+
   return (
     <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <ListPanelHeader
         columns="grid-cols-[minmax(180px,1.35fr)_84px_96px_112px_84px_100px_92px]"
         labels={["종목", "보유수량", "평균단가", "평가금액", "수익률", "평가상태", "주문"]}
       />
-      {rows.map((row) => {
+      {displayRows.map((row) => {
         const stock = getTradingStockByName(row.name);
+        const canSell = toNumber(row.quantity) > 0;
         return (
           <button
             type="button"
             key={`${row.name}-${row.quantity}`}
-            onClick={() => onSellStock(row)}
-            className="grid w-full grid-cols-[minmax(180px,1.35fr)_84px_96px_112px_84px_100px_92px] items-center border-t border-slate-100 px-3 py-3 text-left text-sm transition hover:bg-blue-50/60 focus-ring"
+            onClick={() => {
+              if (canSell) onSellStock(row);
+            }}
+            disabled={!canSell}
+            className="grid w-full grid-cols-[minmax(180px,1.35fr)_84px_96px_112px_84px_100px_92px] items-center border-t border-slate-100 px-3 py-3 text-left text-sm transition hover:bg-blue-50/60 disabled:cursor-not-allowed disabled:hover:bg-white focus-ring"
             aria-label={`${row.name} 매도 주문 화면으로 설정`}
             title={`${row.name} 매도 주문 화면으로 설정`}
           >
@@ -1217,8 +1254,8 @@ function BalancePanel({
             <span className="justify-self-end">
               <StatusBadge status={row.tone === "up" ? "수익" : row.tone === "down" ? "손실" : "보합"} />
             </span>
-            <span className="justify-self-end rounded-lg bg-[#071832] px-3 py-1.5 text-xs font-extrabold text-white">
-              매도 설정
+            <span className="justify-self-end rounded-lg bg-slate-200 px-3 py-1.5 text-xs font-extrabold text-slate-500">
+              0
             </span>
           </button>
         );
@@ -1346,26 +1383,18 @@ function profitLossMemo(row: ProfitLossSummary) {
   return `${row.label}은 중립입니다.`;
 }
 
-function linePath(values: Array<number | null>, x: (index: number) => number, y: (price: number) => number) {
-  return values
-    .map((value, index) => {
-      if (value === null) return "";
-      return `${index === values.findIndex((candidate) => candidate !== null) ? "M" : "L"} ${x(index)} ${y(value)}`;
-    })
-    .filter(Boolean)
-    .join(" ");
-}
-
-function movingAverage(values: number[], period: number): Array<number | null> {
-  return values.map((_, index) => {
-    if (index < period - 1) return null;
-    const slice = values.slice(index - period + 1, index + 1);
-    return slice.reduce((sum, value) => sum + value, 0) / period;
-  });
-}
-
 function isKisRealtimeSupported(stock: TradingWorkspaceData["stock"]) {
   return stock.exchange === "KRX" && /^\d{6}$/.test(stock.code);
+}
+
+function applyQuoteToWatchItem(item: WatchItem, quotes: Record<string, Parameters<typeof formatSharedQuoteDisplay>[0]>): WatchItem {
+  const quote = formatSharedQuoteDisplay(getQuoteFromMap(quotes, item.symbol));
+  return {
+    ...item,
+    price: quote.price,
+    changeRate: quote.changeRate,
+    volumeAmount: quote.tradingValue,
+  };
 }
 
 function mergePriceData(current: PriceData | null, next: Partial<PriceData>): PriceData {
@@ -1388,7 +1417,7 @@ function mergePriceData(current: PriceData | null, next: Partial<PriceData>): Pr
 }
 
 function mergeLiveStock(stock: TradingWorkspaceData["stock"], livePrice: PriceData | null): TradingWorkspaceData["stock"] {
-  if (!livePrice || !Number.isFinite(livePrice.price) || livePrice.price <= 0) return stock;
+  if (!livePrice || !Number.isFinite(livePrice.price) || livePrice.price <= 0) return createPendingQuoteStock(stock);
   const tone = toneFromNumber(livePrice.change_rate || livePrice.change);
   return {
     ...stock,
@@ -1398,7 +1427,24 @@ function mergeLiveStock(stock: TradingWorkspaceData["stock"], livePrice: PriceDa
     tone,
     volume: livePrice.volume > 0 ? livePrice.volume.toLocaleString("ko-KR") : stock.volume,
     tradingValue: livePrice.trading_value && livePrice.trading_value > 0 ? formatTradingValue(livePrice.trading_value) : stock.tradingValue,
-    source: "kis",
+    source: livePrice.source === "kb" ? "kb" : "kis",
+  };
+}
+
+function hasResolvedQuoteSource(source: TradingWorkspaceData["stock"]["source"]) {
+  return source === "kb" || source === "kis";
+}
+
+function createPendingQuoteStock(stock: TradingWorkspaceData["stock"]): TradingWorkspaceData["stock"] {
+  return {
+    ...stock,
+    price: "0",
+    change: "0",
+    changeRate: "0%",
+    tone: "neutral",
+    volume: "0",
+    tradingValue: "0",
+    source: "pending",
   };
 }
 
@@ -1420,7 +1466,7 @@ function formatSignedPrice(value: number) {
 }
 
 function formatSignedPercent(value: number) {
-  if (!Number.isFinite(value) || value === 0) return "0.00%";
+  if (!Number.isFinite(value) || value === 0) return "0%";
   return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
@@ -1454,7 +1500,7 @@ function getLiveQuoteState(status: LiveQuoteStatus, error: string | null) {
     return {
       connected: false,
       label: "시세 갱신",
-      title: "KIS 현재가 REST 갱신 중",
+      title: "KB 현재가 조회 갱신 중",
       className: "border-blue-100 bg-blue-50 text-blue-700",
     };
   }
@@ -1462,14 +1508,14 @@ function getLiveQuoteState(status: LiveQuoteStatus, error: string | null) {
     return {
       connected: false,
       label: "조회 중",
-      title: "KIS 현재가 조회 중",
+      title: "KB 현재가 조회 중",
       className: "border-slate-200 bg-white text-slate-500",
     };
   }
   return {
     connected: false,
     label: "연결 오류",
-    title: error || "KIS 시세 연결 오류",
+    title: error || "KB 조회 또는 KIS 실시간 연결 오류",
     className: "border-red-100 bg-red-50 text-red-600",
   };
 }
@@ -1490,21 +1536,12 @@ function getOrderQuantityFromBalance(quantity: string) {
 }
 
 function getWatchItemMarket(item: WatchItem): { price: string; change: string; changeRate: string; tone: PriceTone } {
-  const workspace = tradingWorkspaceByStockId[item.symbol];
-  if (workspace) {
-    return {
-      price: workspace.stock.price,
-      change: workspace.stock.change,
-      changeRate: workspace.stock.changeRate,
-      tone: workspace.stock.tone,
-    };
-  }
-
+  const changeRate = item.changeRate || "0%";
   return {
-    price: item.price,
-    change: "-",
-    changeRate: item.changeRate,
-    tone: toneFromChangeRate(item.changeRate),
+    price: item.price || "0",
+    change: changeRate === "0%" ? "0" : changeRate,
+    changeRate,
+    tone: toneFromChangeRate(changeRate),
   };
 }
 

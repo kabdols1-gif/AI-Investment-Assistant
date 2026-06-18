@@ -1,6 +1,8 @@
 "use client";
 
 import { Info, X } from "lucide-react";
+import { useMarketQuotes } from "@/hooks";
+import { formatQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
 import type { RecentViewedStockItem } from "@/types/symbols";
 
 interface RecentViewedStocksBarProps {
@@ -16,6 +18,19 @@ export function RecentViewedStocksBar({
   onSelect,
   onRemove,
 }: RecentViewedStocksBarProps) {
+  const { quotes } = useMarketQuotes(items.map((item) => item.code));
+  const displayItems = items.map((item) => {
+    const quote = formatQuoteDisplay(getQuoteFromMap(quotes, item.code));
+    return {
+      ...item,
+      price: quote.price,
+      changeRate: quote.changeRate,
+      changeDirection: quote.direction,
+      volume: quote.volume,
+      tradingValue: quote.tradingValue,
+    };
+  });
+
   if (items.length === 0) {
     return null;
   }
@@ -28,7 +43,7 @@ export function RecentViewedStocksBar({
       </div>
       <div className="-mx-1 overflow-x-auto pb-1">
         <div className="flex min-w-max items-center gap-2 px-1 whitespace-nowrap">
-        {items.map((item) => (
+        {displayItems.map((item) => (
           <div
             key={item.id}
             className={`group flex h-14 min-w-[230px] items-center gap-2 rounded-lg border bg-white px-3 text-left shadow-sm transition focus-ring ${

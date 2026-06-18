@@ -9,9 +9,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from core import data_fetcher
 from core.websocket_manager import get_ws_manager
 from backend import authenticate, is_authenticated
+from backend.services.kb_market_service import KBMarketServiceError, get_kb_current_price
 from backend.services.kis_market_service import (
     KISMarketServiceError,
-    get_kis_current_price,
     stream_kis_realtime_price,
 )
 
@@ -115,7 +115,7 @@ async def get_current_price(
         }
     """
     try:
-        price_data = await get_kis_current_price(stock_code, env_dv)
+        price_data = await get_kb_current_price(stock_code, env_dv)
 
         if not price_data:
             return {
@@ -128,8 +128,8 @@ async def get_current_price(
             "data": price_data
         }
 
-    except KISMarketServiceError as e:
-        logging.error(f"KIS 현재가 조회 에러: {e}")
+    except KBMarketServiceError as e:
+        logging.error(f"KB 현재가 조회 에러: {e}")
         return {
             "status": "error",
             "message": str(e)
@@ -150,25 +150,6 @@ async def websocket_price(websocket: WebSocket, stock_code: str, env_dv: str = "
     logging.info(f"KIS price WebSocket 연결: {stock_code}")
 
     try:
-        try:
-            snapshot = await get_kis_current_price(stock_code, env_dv)
-            await websocket.send_json(
-                {
-                    "type": "price",
-                    "stock_code": stock_code,
-                    "source": "kis_rest",
-                    "data": snapshot,
-                }
-            )
-        except KISMarketServiceError as exc:
-            await websocket.send_json(
-                {
-                    "type": "status",
-                    "status": "error",
-                    "message": str(exc),
-                }
-            )
-
         async for price_data in stream_kis_realtime_price(stock_code, env_dv):
             await websocket.send_json(
                 {

@@ -15,6 +15,12 @@ def _not_implemented(name: str):
 
 
 def clear_balance_cache():
+    try:
+        from backend.services.kb_account_service import clear_kb_account_cache
+
+        clear_kb_account_cache()
+    except Exception:
+        pass
     return None
 
 

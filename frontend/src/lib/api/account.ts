@@ -9,12 +9,14 @@ export async function getAccountInfo(): Promise<ApiResponse<AccountInfo>> {
   return apiGet<ApiResponse<AccountInfo>>("/api/account/info");
 }
 
-export async function getHoldings(): Promise<ApiResponse<Holding[]>> {
-  return apiGet<ApiResponse<Holding[]>>("/api/account/holdings");
+export async function getHoldings(forceRefresh = false): Promise<ApiResponse<Holding[]>> {
+  const query = forceRefresh ? "?force_refresh=true" : "";
+  return apiGet<ApiResponse<Holding[]>>(`/api/account/holdings${query}`);
 }
 
-export async function getBalance(): Promise<ApiResponse<Balance>> {
-  return apiGet<ApiResponse<Balance>>("/api/account/balance");
+export async function getBalance(forceRefresh = false): Promise<ApiResponse<Balance>> {
+  const query = forceRefresh ? "?force_refresh=true" : "";
+  return apiGet<ApiResponse<Balance>>(`/api/account/balance${query}`);
 }
 
 export async function getBuyableAmount(
