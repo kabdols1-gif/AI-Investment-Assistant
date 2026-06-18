@@ -57,6 +57,7 @@ const orderTypes = ["보통", "시장가", "조건부", "최유리"];
 const ratios = ["10%", "25%", "50%", "100%", "직접"];
 const chartPeriods = ["1분", "5분", "15분", "30분", "일", "주", "월"];
 const dualExchangeStockIds = new Set(["005930", "000660", "035720", "035420", "373220", "005380", "066570"]);
+const ORDERBOOK_DISPLAY_DEPTH = 5;
 
 interface TradingWorkspaceProps {
   data: TradingWorkspaceData;
@@ -89,6 +90,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   const [orderbookData, setOrderbookData] = useState<OrderbookData | null>(null);
   const [executionData, setExecutionData] = useState<ExecutionData[] | null>(null);
   const liveReconnectRef = useRef<number | null>(null);
+  const orderbookReconnectRef = useRef<number | null>(null);
   const { quotes: watchlistQuotes } = useMarketQuotes(watchlistItems.map((item) => item.symbol));
   const displayWatchlistItems = useMemo(
     () => watchlistItems.map((item) => applyQuoteToWatchItem(item, watchlistQuotes)),
@@ -224,46 +226,117 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     }
 
     let isActive = true;
-    let marketDataTimer: number | null = null;
+    let executionTimer: number | null = null;
+    let orderbookSocket: WebSocket | null = null;
     const stockCode = data.stock.code;
     const exchange = data.stock.exchange;
+    const stockName = data.stock.name;
 
-    const fetchMarketDetails = async () => {
-      const [orderbookResult, executionsResult] = await Promise.allSettled([
-        getOrderbook(stockCode, "real", exchange),
-        getExecutions(stockCode, "real", 10, exchange),
-      ]);
+    const applyOrderbook = (next: Partial<OrderbookData>, timestamp?: string | null) => {
+      setOrderbookData((current) => ({
+        stock_code: next.stock_code ?? current?.stock_code ?? stockCode,
+        stock_name: next.stock_name ?? current?.stock_name ?? stockName,
+        current_price: numberOr(next.current_price, current?.current_price ?? 0),
+        ask_prices: next.ask_prices ?? current?.ask_prices ?? [],
+        ask_volumes: next.ask_volumes ?? current?.ask_volumes ?? [],
+        bid_prices: next.bid_prices ?? current?.bid_prices ?? [],
+        bid_volumes: next.bid_volumes ?? current?.bid_volumes ?? [],
+        total_ask_volume: numberOr(next.total_ask_volume, current?.total_ask_volume ?? 0),
+        total_bid_volume: numberOr(next.total_bid_volume, current?.total_bid_volume ?? 0),
+        expected_price: numberOr(next.expected_price, current?.expected_price ?? 0),
+        expected_volume: numberOr(next.expected_volume, current?.expected_volume ?? 0),
+        timestamp: next.timestamp ?? timestamp ?? current?.timestamp ?? null,
+        source: next.source ?? current?.source ?? "kb_b2c",
+        exchange: next.exchange ?? current?.exchange ?? exchange,
+        currency: next.currency ?? current?.currency ?? inferStockCurrency(data.stock),
+      }));
+    };
 
+    const fetchOrderbook = async () => {
+      const response = await getOrderbook(stockCode, "real", exchange);
       if (!isActive) return;
-
-      if (
-        orderbookResult.status === "fulfilled" &&
-        orderbookResult.value.status === "success" &&
-        orderbookResult.value.data
-      ) {
-        setOrderbookData(orderbookResult.value.data);
+      if (response.status === "success" && response.data) {
+        setOrderbookData(response.data);
       } else {
         setOrderbookData(null);
       }
+    };
 
-      if (
-        executionsResult.status === "fulfilled" &&
-        executionsResult.value.status === "success" &&
-        executionsResult.value.data
-      ) {
-        setExecutionData(executionsResult.value.data.executions ?? []);
+    const fetchExecutions = async () => {
+      const response = await getExecutions(stockCode, "real", 10, exchange);
+      if (!isActive) return;
+      if (response.status === "success" && response.data) {
+        setExecutionData(response.data.executions ?? []);
       } else {
         setExecutionData(null);
       }
     };
 
-    void fetchMarketDetails();
-    marketDataTimer = window.setInterval(() => void fetchMarketDetails(), 15000);
+    const connectOrderbookRealtime = () => {
+      if (!isActive) return;
+      if (orderbookReconnectRef.current !== null) {
+        window.clearTimeout(orderbookReconnectRef.current);
+        orderbookReconnectRef.current = null;
+      }
+
+      orderbookSocket?.close();
+      const params = new URLSearchParams();
+      if (exchange) params.set("exchange", exchange);
+      const query = params.toString();
+      orderbookSocket = new WebSocket(`${getWsBase()}/api/market/ws/${encodeURIComponent(stockCode)}${query ? `?${query}` : ""}`);
+
+      orderbookSocket.onmessage = (event) => {
+        if (!isActive) return;
+        try {
+          const payload = JSON.parse(event.data) as {
+            type?: string;
+            timestamp?: string | null;
+            data?: Partial<OrderbookData>;
+          };
+          if (payload.type === "orderbook" && payload.data) {
+            applyOrderbook(payload.data, payload.timestamp);
+          }
+        } catch {
+          // Ignore malformed orderbook frames.
+        }
+      };
+
+      orderbookSocket.onerror = () => {
+        if (!isActive) return;
+        void fetchOrderbook().catch(() => setOrderbookData(null));
+      };
+
+      orderbookSocket.onclose = () => {
+        if (!isActive) return;
+        orderbookReconnectRef.current = window.setTimeout(connectOrderbookRealtime, 3000);
+      };
+    };
+
+    void fetchOrderbook().catch(() => {
+      if (isActive) setOrderbookData(null);
+    });
+    void fetchExecutions().catch(() => {
+      if (isActive) setExecutionData(null);
+    });
+    connectOrderbookRealtime();
+    executionTimer = window.setInterval(() => {
+      void fetchExecutions().catch(() => {
+        if (isActive) setExecutionData(null);
+      });
+    }, 15000);
 
     return () => {
       isActive = false;
-      if (marketDataTimer !== null) {
-        window.clearInterval(marketDataTimer);
+      if (executionTimer !== null) {
+        window.clearInterval(executionTimer);
+      }
+      if (orderbookReconnectRef.current !== null) {
+        window.clearTimeout(orderbookReconnectRef.current);
+        orderbookReconnectRef.current = null;
+      }
+      if (orderbookSocket) {
+        orderbookSocket.onclose = null;
+        orderbookSocket.close();
       }
     };
   }, [data.stock]);
@@ -752,6 +825,7 @@ function OrderBookPanel({ orderbook, rows, currentPrice }: { orderbook: Orderboo
           return (
             <div
               key={`${row.price}-${index}`}
+              data-testid="trading-orderbook-row"
               className={`grid grid-cols-[0.7fr_1fr_0.8fr_0.9fr_1fr_0.7fr] items-center px-2 py-1 text-center text-xs ${
                 isCurrent ? "border-y border-[#1d4ed8] bg-blue-50" : index < 5 ? "bg-blue-50/35" : "bg-red-50/35"
               }`}
@@ -1091,7 +1165,7 @@ function ChartPanel({
 
 function orderbookToRows(orderbook: OrderbookData): OrderBookRow[] {
   const currentPrice = orderbook.current_price || 0;
-  const askRows: OrderBookRow[] = (orderbook.ask_prices ?? []).map((price, index) => {
+  const askRows: OrderBookRow[] = (orderbook.ask_prices ?? []).slice(0, ORDERBOOK_DISPLAY_DEPTH).map((price, index) => {
     const volume = orderbook.ask_volumes?.[index] ?? 0;
     return {
       askQuantity: formatInteger(volume),
@@ -1100,7 +1174,7 @@ function orderbookToRows(orderbook: OrderbookData): OrderBookRow[] {
       tone: toneFromNumber(price - currentPrice),
     };
   });
-  const bidRows: OrderBookRow[] = (orderbook.bid_prices ?? []).map((price, index) => {
+  const bidRows: OrderBookRow[] = (orderbook.bid_prices ?? []).slice(0, ORDERBOOK_DISPLAY_DEPTH).map((price, index) => {
     const volume = orderbook.bid_volumes?.[index] ?? 0;
     return {
       price: formatInteger(price),

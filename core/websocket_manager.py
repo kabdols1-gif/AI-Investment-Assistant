@@ -16,7 +16,7 @@ from backend.services.kb_market_service import KBMarketServiceError, get_kb_orde
 
 logging.basicConfig(level=logging.INFO)
 
-ORDERBOOK_POLL_INTERVAL_SECONDS = 3
+ORDERBOOK_POLL_INTERVAL_SECONDS = 1
 
 
 class OrderbookWebSocketManager:

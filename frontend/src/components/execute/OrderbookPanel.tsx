@@ -6,6 +6,8 @@ import { getOrderbook, type OrderbookData } from "@/lib/api/market";
 import { cn } from "@/lib/utils";
 import { getWsBase } from "@/lib/api/client";
 
+const ORDERBOOK_DISPLAY_DEPTH = 5;
+
 interface OrderbookPanelProps {
   stockCode: string;
   stockName?: string;
@@ -159,14 +161,13 @@ export function OrderbookPanel({
     onPriceSelect?.(price);
   };
 
+  const askPrices = (orderbook?.ask_prices || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
+  const askVolumes = (orderbook?.ask_volumes || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
+  const bidPrices = (orderbook?.bid_prices || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
+  const bidVolumes = (orderbook?.bid_volumes || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
+
   // Calculate max volume for bar sizing
-  const maxVolume = orderbook
-    ? Math.max(
-        ...(orderbook.ask_volumes || []),
-        ...(orderbook.bid_volumes || []),
-        1
-      )
-    : 1;
+  const maxVolume = Math.max(...askVolumes, ...bidVolumes, 1);
 
   if (isLoading && !orderbook) {
     return (
@@ -238,14 +239,14 @@ export function OrderbookPanel({
       <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
         {/* Ask (Sell) Orders - Red */}
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
-          {(orderbook.ask_prices || []).slice().reverse().map((price, idx) => {
-            const askVolumes = orderbook.ask_volumes || [];
+          {askPrices.slice().reverse().map((price, idx) => {
             const volume = askVolumes[askVolumes.length - 1 - idx] || 0;
             const barWidth = (volume / maxVolume) * 100;
 
             return (
               <button
                 key={`ask-${idx}`}
+                data-testid="confirm-orderbook-ask-row"
                 onClick={() => handlePriceClick(price)}
                 className="w-full flex items-center relative hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors"
               >
@@ -278,13 +279,14 @@ export function OrderbookPanel({
 
         {/* Bid (Buy) Orders - Blue */}
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
-          {(orderbook.bid_prices || []).map((price, idx) => {
-            const volume = (orderbook.bid_volumes || [])[idx] || 0;
+          {bidPrices.map((price, idx) => {
+            const volume = bidVolumes[idx] || 0;
             const barWidth = (volume / maxVolume) * 100;
 
             return (
               <button
                 key={`bid-${idx}`}
+                data-testid="confirm-orderbook-bid-row"
                 onClick={() => handlePriceClick(price)}
                 className="w-full flex items-center relative hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors"
               >
