@@ -15,6 +15,7 @@ import websockets
 
 from backend.services.audit_log import append_audit_event
 from backend.services.masking import mask_sensitive
+from backend.services.openapi_runtime import load_openapi_kis_credentials
 
 
 KIS_QUOTE_TR_ID = "FHKST01010100"
@@ -97,16 +98,19 @@ def _load_config_credentials(live: bool) -> dict[str, str]:
 def _load_kis_credentials(live: bool) -> dict[str, str]:
     mode = "REAL" if live else "PAPER"
     configured = _load_config_credentials(live)
+    runtime_credentials = load_openapi_kis_credentials(live=live)
     return {
         "client_id": _first_text(
             _first_env(f"KIS_{mode}_CLIENT_ID", f"KIS_{mode}_APP_KEY"),
             _first_env("KIS_CLIENT_ID", "KIS_APP_KEY"),
             configured.get("client_id"),
+            runtime_credentials.get("client_id"),
         ),
         "client_secret": _first_text(
             _first_env(f"KIS_{mode}_CLIENT_SECRET", f"KIS_{mode}_SECRET_KEY", f"KIS_{mode}_APP_SECRET"),
             _first_env("KIS_CLIENT_SECRET", "KIS_SECRET_KEY", "KIS_APP_SECRET"),
             configured.get("client_secret"),
+            runtime_credentials.get("client_secret"),
         ),
         "base_url": _first_text(
             _first_env(f"KIS_{mode}_REST_BASE_URL", f"KIS_{mode}_BASE_URL"),
@@ -474,13 +478,51 @@ def parse_kis_realtime_trade_message(message: str) -> dict[str, Any] | None:
 
 
 async def stream_kis_realtime_price(stock_code: str, env_dv: str = "real") -> AsyncIterator[dict[str, Any]]:
-    normalized_code = stock_code.strip().zfill(6)
+    async for parsed in stream_kis_realtime_prices([stock_code], env_dv):
+        yield parsed
+
+
+async def stream_kis_realtime_prices(stock_codes: list[str], env_dv: str = "real") -> AsyncIterator[dict[str, Any]]:
+    normalized_codes = _normalize_realtime_stock_codes(stock_codes)
+    if not normalized_codes:
+        return
+
     approval = await issue_kis_approval_key(env_dv)
     live = approval.get("mode") == "real"
     websocket_url = _kis_websocket_url(live)
-    subscribe_payload = {
+    subscribed_code_set = set(normalized_codes)
+
+    async with websockets.connect(websocket_url, ping_interval=20, ping_timeout=20) as socket:
+        for code in normalized_codes:
+            await socket.send(json.dumps(_realtime_subscribe_payload(approval["approval_key"], code), ensure_ascii=False))
+
+        async for raw_message in socket:
+            message = raw_message.decode("utf-8", errors="ignore") if isinstance(raw_message, bytes) else str(raw_message)
+            parsed = parse_kis_realtime_trade_message(message)
+            if parsed and parsed.get("stock_code") in subscribed_code_set:
+                yield parsed
+
+
+def _normalize_realtime_stock_codes(stock_codes: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen = set()
+    for code in stock_codes:
+        text = str(code or "").strip().upper()
+        if text.startswith("A") and text[1:].isdigit():
+            text = text[1:]
+        if text.isdigit():
+            text = text.zfill(6)
+        if not text or text in seen or not text.isdigit() or len(text) != 6:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return normalized
+
+
+def _realtime_subscribe_payload(approval_key: str, stock_code: str) -> dict[str, Any]:
+    return {
         "header": {
-            "approval_key": approval["approval_key"],
+            "approval_key": approval_key,
             "custtype": "P",
             "tr_type": "1",
             "content-type": "utf-8",
@@ -488,15 +530,7 @@ async def stream_kis_realtime_price(stock_code: str, env_dv: str = "real") -> As
         "body": {
             "input": {
                 "tr_id": KIS_REALTIME_TRADE_TR_ID,
-                "tr_key": normalized_code,
+                "tr_key": stock_code,
             }
         },
     }
-
-    async with websockets.connect(websocket_url, ping_interval=20, ping_timeout=20) as socket:
-        await socket.send(json.dumps(subscribe_payload, ensure_ascii=False))
-        async for raw_message in socket:
-            message = raw_message.decode("utf-8", errors="ignore") if isinstance(raw_message, bytes) else str(raw_message)
-            parsed = parse_kis_realtime_trade_message(message)
-            if parsed:
-                yield parsed

@@ -15,6 +15,7 @@ from backend.services.kb_market_service import (
 from backend.services.kis_market_service import (
     KISMarketServiceError,
     stream_kis_realtime_price,
+    stream_kis_realtime_prices,
 )
 from core.websocket_manager import get_ws_manager
 
@@ -166,6 +167,73 @@ async def websocket_price(websocket: WebSocket, stock_code: str, env_dv: str = "
             pass
     finally:
         logging.info("KIS price WebSocket closed: %s", stock_code)
+
+
+@router.websocket("/ws/prices")
+async def websocket_prices(websocket: WebSocket, codes: str = "", env_dv: str = "real"):
+    """Stream KIS realtime price frames for multiple stocks."""
+
+    await websocket.accept()
+    stock_codes = [code.strip() for code in codes.split(",") if code.strip()]
+    logging.info("KIS multi-price WebSocket connected: %s", ",".join(stock_codes))
+
+    if not stock_codes:
+        await websocket.send_json(
+            {
+                "type": "status",
+                "status": "error",
+                "message": "At least one stock code is required.",
+            }
+        )
+        await websocket.close(code=1008, reason="Missing stock codes")
+        return
+
+    try:
+        await websocket.send_json(
+            {
+                "type": "status",
+                "status": "subscribing",
+                "source": "kis_realtime",
+                "stock_codes": stock_codes,
+            }
+        )
+        async for price_data in stream_kis_realtime_prices(stock_codes, env_dv):
+            await websocket.send_json(
+                {
+                    "type": "price",
+                    "stock_code": price_data.get("stock_code"),
+                    "source": "kis_realtime",
+                    "data": price_data,
+                }
+            )
+    except WebSocketDisconnect:
+        pass
+    except KISMarketServiceError as exc:
+        logging.error("KIS multi realtime price failed: %s", exc)
+        try:
+            await websocket.send_json(
+                {
+                    "type": "status",
+                    "status": "error",
+                    "message": str(exc),
+                }
+            )
+        except Exception:
+            pass
+    except Exception as exc:
+        logging.error("KIS multi price WebSocket failed: %s", exc)
+        try:
+            await websocket.send_json(
+                {
+                    "type": "status",
+                    "status": "error",
+                    "message": str(exc),
+                }
+            )
+        except Exception:
+            pass
+    finally:
+        logging.info("KIS multi-price WebSocket closed: %s", ",".join(stock_codes))
 
 
 @router.websocket("/ws/{stock_code}")
