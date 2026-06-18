@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Calculator,
   ChevronDown,
@@ -10,10 +10,14 @@ import {
   Plus,
   RotateCcw,
   Settings,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
 import { LightweightCandlestickChart } from "@/components/charts/LightweightCharts";
 import { useToast } from "@/components/ui";
+import { getWsBase } from "@/lib/api/client";
+import { getCurrentPrice, type PriceData } from "@/lib/api/market";
 import type { BrokerProviderOption } from "@/lib/brokerProviders";
 import { tradingWorkspaceByStockId, watchItems } from "@/lib/mockData";
 import { readStoredWatchItems, WATCHLIST_STORAGE_EVENT, type WatchItem } from "@/lib/watchlistStorage";
@@ -34,6 +38,7 @@ type MarketInfoTab = "호가" | "체결" | "거래원";
 type OrderTab = "매수" | "매도" | "정정" | "취소";
 type BottomTab = "차트" | "예수금" | "주문내역" | "매매손익" | "잔고평가" | "뉴스";
 type WorkspaceOrderSide = "buy" | "sell";
+type LiveQuoteStatus = "idle" | "loading" | "connected" | "polling" | "error";
 
 const leftInfoTabs: LeftInfoTab[] = ["관심종목", "현재가"];
 const marketInfoTabs: MarketInfoTab[] = ["호가", "체결", "거래원"];
@@ -69,8 +74,14 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     quantity: initialQuantity,
   });
   const [watchlistItems, setWatchlistItems] = useState<WatchItem[]>([]);
-  const draftPrice = orderDraft.stockId === data.stock.id ? orderDraft.price : data.stock.price;
-  const draftQuantity = orderDraft.stockId === data.stock.id ? orderDraft.quantity : "0";
+  const [livePrice, setLivePrice] = useState<PriceData | null>(null);
+  const [liveStatus, setLiveStatus] = useState<LiveQuoteStatus>("idle");
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const liveReconnectRef = useRef<number | null>(null);
+  const liveStock = useMemo(() => mergeLiveStock(data.stock, livePrice), [data.stock, livePrice]);
+  const liveData = useMemo<TradingWorkspaceData>(() => ({ ...data, stock: liveStock }), [data, liveStock]);
+  const draftPrice = orderDraft.stockId === liveData.stock.id ? orderDraft.price : liveData.stock.price;
+  const draftQuantity = orderDraft.stockId === liveData.stock.id ? orderDraft.quantity : "0";
 
   useEffect(() => {
     const syncWatchlist = () => {
@@ -83,6 +94,113 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     return () => window.removeEventListener(WATCHLIST_STORAGE_EVENT, syncWatchlist);
   }, []);
 
+  useEffect(() => {
+    if (!isKisRealtimeSupported(data.stock)) {
+      setLivePrice(null);
+      setLiveStatus("idle");
+      setLiveError(null);
+      return;
+    }
+
+    let isActive = true;
+    let socket: WebSocket | null = null;
+    let pollTimer: number | null = null;
+    const stockCode = data.stock.code;
+
+    const fetchSnapshot = async () => {
+      if (!isActive) return;
+      setLiveStatus((status) => (status === "connected" ? status : "loading"));
+      try {
+        const response = await getCurrentPrice(stockCode, "real");
+        if (!isActive) return;
+        const snapshot = response.data;
+        if (response.status === "success" && snapshot) {
+          setLivePrice((current) => mergePriceData(current, snapshot));
+          setLiveError(null);
+          setLiveStatus((status) => (status === "connected" ? status : "polling"));
+          return;
+        }
+        throw new Error(response.message || "현재가를 불러오지 못했습니다.");
+      } catch (error) {
+        if (!isActive) return;
+        setLiveError(error instanceof Error ? error.message : "현재가를 불러오지 못했습니다.");
+        setLiveStatus("error");
+      }
+    };
+
+    const connectRealtime = () => {
+      if (!isActive) return;
+      socket?.close();
+      socket = new WebSocket(`${getWsBase()}/api/market/ws/price/${stockCode}?env_dv=real`);
+
+      socket.onopen = () => {
+        if (!isActive) return;
+        setLiveStatus("connected");
+        setLiveError(null);
+      };
+
+      socket.onmessage = (event) => {
+        if (!isActive) return;
+        try {
+          const payload = JSON.parse(event.data) as {
+            type?: string;
+            status?: string;
+            message?: string;
+            data?: Partial<PriceData>;
+          };
+          const nextPrice = payload.data;
+          if (payload.type === "price" && nextPrice) {
+            setLivePrice((current) => mergePriceData(current, nextPrice));
+            setLiveStatus("connected");
+            setLiveError(null);
+          }
+          if (payload.type === "status" && payload.status === "error") {
+            setLiveError(payload.message || "실시간 시세 연결 오류");
+          }
+        } catch {
+          // Ignore malformed realtime frames.
+        }
+      };
+
+      socket.onerror = () => {
+        if (!isActive) return;
+        setLiveStatus((status) => (status === "connected" ? "polling" : "error"));
+      };
+
+      socket.onclose = () => {
+        if (!isActive) return;
+        setLiveStatus((status) => (status === "connected" ? "polling" : status));
+        liveReconnectRef.current = window.setTimeout(connectRealtime, 5000);
+      };
+    };
+
+    void fetchSnapshot();
+    pollTimer = window.setInterval(() => void fetchSnapshot(), 30000);
+    connectRealtime();
+
+    return () => {
+      isActive = false;
+      if (pollTimer !== null) {
+        window.clearInterval(pollTimer);
+      }
+      if (liveReconnectRef.current !== null) {
+        window.clearTimeout(liveReconnectRef.current);
+        liveReconnectRef.current = null;
+      }
+      if (socket) {
+        socket.onclose = null;
+        socket.close();
+      }
+    };
+  }, [data.stock]);
+
+  useEffect(() => {
+    setOrderDraft((current) => {
+      if (current.stockId !== data.stock.id || current.quantity !== "0") return current;
+      return { ...current, price: liveData.stock.price };
+    });
+  }, [data.stock.id, liveData.stock.price]);
+
   const orderAmount = useMemo(() => {
     const priceNumber = toNumber(draftPrice);
     const quantityNumber = toNumber(draftQuantity);
@@ -90,7 +208,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   }, [draftPrice, draftQuantity]);
 
   const previewOrder = () => {
-    toast.info(`${data.stock.name} ${orderTab} 주문 preview가 생성되었습니다. 실전 주문은 제출되지 않았습니다.`);
+    toast.info(`${liveData.stock.name} ${orderTab} 주문 preview가 생성되었습니다. 실전 주문은 제출되지 않았습니다.`);
   };
 
   const resetOrder = () => {
@@ -98,7 +216,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     setRatio("직접");
     setOrderDraft({
       stockId: data.stock.id,
-      price: data.stock.price,
+      price: liveData.stock.price,
       quantity: "0",
     });
   };
@@ -140,7 +258,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   const handleQuantityChange = (value: string) => {
     setOrderDraft((current) => ({
       stockId: data.stock.id,
-      price: current.stockId === data.stock.id ? current.price : data.stock.price,
+      price: current.stockId === data.stock.id ? current.price : liveData.stock.price,
       quantity: value,
     }));
   };
@@ -148,13 +266,14 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   return (
     <div className="space-y-2">
       <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-        <StockHeader data={data} />
+        <StockHeader data={liveData} liveError={liveError} liveStatus={liveStatus} />
 
         <div className="mt-2 grid items-stretch gap-2 xl:grid-cols-[minmax(300px,0.74fr)_minmax(0,1.74fr)]">
           <div className="min-h-0 xl:row-span-2">
             <LeftStockPanel
               activeTab={leftInfoTab}
-              data={data}
+              data={liveData}
+              livePrice={livePrice}
               watchlistItems={watchlistItems}
               onSelectWatchItem={handleWatchItemSelect}
               onTabChange={setLeftInfoTab}
@@ -162,7 +281,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
           </div>
 
           <div className="grid min-w-0 gap-2 2xl:grid-cols-[minmax(380px,1fr)_minmax(360px,0.76fr)]">
-            <MarketInfoPanel activeTab={marketInfoTab} data={data} onTabChange={setMarketInfoTab} />
+            <MarketInfoPanel activeTab={marketInfoTab} data={liveData} onTabChange={setMarketInfoTab} />
             <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption}>
               <OrderFormPanel
                 activeTab={orderTab}
@@ -201,14 +320,14 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
             </div>
             <div className="p-2">
               {bottomTab === "차트" && (
-                <ChartPanel candles={data.chartCandles} period={period} onPeriodChange={setPeriod} stockName={data.stock.name} />
+                <ChartPanel candles={data.chartCandles} period={period} onPeriodChange={setPeriod} stockName={liveData.stock.name} />
               )}
-              {bottomTab === "뉴스" && <NewsPanel stock={data.stock} />}
+              {bottomTab === "뉴스" && <NewsPanel stock={liveData.stock} />}
               {bottomTab !== "차트" && bottomTab !== "뉴스" && (
                 <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption} showNotice={false}>
                   {bottomTab === "예수금" && <CashPanel rows={data.cashSummary} />}
-                  {bottomTab === "주문내역" && <OrderHistoryPanel rows={data.orderHistory} stock={data.stock} />}
-                  {bottomTab === "매매손익" && <ProfitLossPanel rows={data.profitLoss} stock={data.stock} />}
+                  {bottomTab === "주문내역" && <OrderHistoryPanel rows={data.orderHistory} stock={liveData.stock} />}
+                  {bottomTab === "매매손익" && <ProfitLossPanel rows={data.profitLoss} stock={liveData.stock} />}
                   {bottomTab === "잔고평가" && <BalancePanel rows={data.balanceEvaluation} onSellStock={handleBalanceStockSell} />}
                 </BrokerConnectionGate>
               )}
@@ -222,18 +341,35 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
 
 function StockHeader({
   data,
+  liveError,
+  liveStatus,
 }: {
   data: TradingWorkspaceData;
+  liveError: string | null;
+  liveStatus: LiveQuoteStatus;
 }) {
   const { stock } = data;
   const exchangeLabel = getExchangeDisplayLabel(stock);
+  const liveState = getLiveQuoteState(liveStatus, liveError);
+  const LiveIcon = liveState.connected ? Wifi : WifiOff;
 
   return (
     <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_auto]">
       <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 rounded-lg bg-[#f8fafc] px-3 py-2">
         <div className="min-w-[132px] max-w-[220px] pr-1">
           <p className="truncate text-xl font-black tracking-normal text-[#071832]">{stock.name}</p>
-          <p className="mt-1 text-xs font-extrabold text-slate-500">{exchangeLabel}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <p className="text-xs font-extrabold text-slate-500">{exchangeLabel}</p>
+            {liveStatus !== "idle" && (
+              <span
+                className={`inline-flex h-5 items-center gap-1 rounded-md border px-1.5 text-[10px] font-extrabold ${liveState.className}`}
+                title={liveState.title}
+              >
+                <LiveIcon className="h-3 w-3" aria-hidden="true" />
+                {liveState.label}
+              </span>
+            )}
+          </div>
         </div>
         <StockHeaderMetric label="종목코드" value={stock.code} valueClassName="font-mono text-base text-[#071832]" />
         <StockHeaderMetric label="가격" value={stock.price} valueClassName={`text-xl ${toneTextClass(stock.tone)}`} />
@@ -304,12 +440,14 @@ function CommunityLink({
 function LeftStockPanel({
   activeTab,
   data,
+  livePrice,
   watchlistItems,
   onSelectWatchItem,
   onTabChange,
 }: {
   activeTab: LeftInfoTab;
   data: TradingWorkspaceData;
+  livePrice: PriceData | null;
   watchlistItems: WatchItem[];
   onSelectWatchItem: (symbol: string) => void;
   onTabChange: (tab: LeftInfoTab) => void;
@@ -335,19 +473,21 @@ function LeftStockPanel({
 
       <div className="min-h-0 flex-1">
         {activeTab === "관심종목" && (
-          <WatchlistPanel activeStockId={data.stock.id} items={watchlistItems} onSelect={onSelectWatchItem} />
+          <WatchlistPanel activeStock={data.stock} activeStockId={data.stock.id} items={watchlistItems} onSelect={onSelectWatchItem} />
         )}
-        {activeTab === "현재가" && <CurrentPricePanel stock={data.stock} />}
+        {activeTab === "현재가" && <CurrentPricePanel livePrice={livePrice} stock={data.stock} />}
       </div>
     </div>
   );
 }
 
 function WatchlistPanel({
+  activeStock,
   activeStockId,
   items,
   onSelect,
 }: {
+  activeStock: TradingWorkspaceData["stock"];
   activeStockId: string;
   items: WatchItem[];
   onSelect: (symbol: string) => void;
@@ -370,8 +510,15 @@ function WatchlistPanel({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {items.map((item) => {
-          const market = getWatchItemMarket(item);
           const isActive = activeStockId === item.symbol;
+          const market = isActive
+            ? {
+                price: activeStock.price,
+                change: activeStock.change,
+                changeRate: activeStock.changeRate,
+                tone: activeStock.tone,
+              }
+            : getWatchItemMarket(item);
 
           return (
             <button
@@ -453,19 +600,19 @@ function MarketInfoPanel({
   );
 }
 
-function CurrentPricePanel({ stock }: { stock: TradingWorkspaceData["stock"] }) {
+function CurrentPricePanel({ livePrice, stock }: { livePrice: PriceData | null; stock: TradingWorkspaceData["stock"] }) {
   const stats = [
     ["현재가", stock.price],
     ["전일대비", stock.change],
     ["등락률", stock.changeRate],
     ["거래량", stock.volume],
     ["거래대금", stock.tradingValue],
-    ["시가", "67,200"],
-    ["고가", "67,300"],
-    ["저가", "65,900"],
-    ["전일종가", "67,230"],
-    ["52주 최고", "88,800"],
-    ["52주 최저", "62,100"],
+    ["시가", formatOptionalPrice(livePrice?.open, "67,200")],
+    ["고가", formatOptionalPrice(livePrice?.high, "67,300")],
+    ["저가", formatOptionalPrice(livePrice?.low, "65,900")],
+    ["전일종가", formatOptionalPrice(livePrice?.previous_close, "67,230")],
+    ["52주 최고", formatOptionalPrice(livePrice?.w52_high, "88,800")],
+    ["52주 최저", formatOptionalPrice(livePrice?.w52_low, "62,100")],
     ["시가총액", "395조"],
     ["PER", "18.4배"],
     ["PBR", "1.24배"],
@@ -1215,6 +1362,116 @@ function movingAverage(values: number[], period: number): Array<number | null> {
     const slice = values.slice(index - period + 1, index + 1);
     return slice.reduce((sum, value) => sum + value, 0) / period;
   });
+}
+
+function isKisRealtimeSupported(stock: TradingWorkspaceData["stock"]) {
+  return stock.exchange === "KRX" && /^\d{6}$/.test(stock.code);
+}
+
+function mergePriceData(current: PriceData | null, next: Partial<PriceData>): PriceData {
+  return {
+    stock_code: next.stock_code ?? current?.stock_code,
+    price: numberOr(next.price, current?.price ?? 0),
+    change: numberOr(next.change, current?.change ?? 0),
+    change_rate: numberOr(next.change_rate, current?.change_rate ?? 0),
+    open: numberOr(next.open, current?.open ?? 0),
+    high: numberOr(next.high, current?.high ?? 0),
+    low: numberOr(next.low, current?.low ?? 0),
+    previous_close: numberOr(next.previous_close, current?.previous_close ?? 0),
+    volume: numberOr(next.volume, current?.volume ?? 0),
+    trading_value: numberOr(next.trading_value, current?.trading_value ?? 0),
+    w52_high: numberOr(next.w52_high, current?.w52_high ?? 0),
+    w52_low: numberOr(next.w52_low, current?.w52_low ?? 0),
+    timestamp: next.timestamp ?? current?.timestamp ?? null,
+    source: next.source ?? current?.source,
+  };
+}
+
+function mergeLiveStock(stock: TradingWorkspaceData["stock"], livePrice: PriceData | null): TradingWorkspaceData["stock"] {
+  if (!livePrice || !Number.isFinite(livePrice.price) || livePrice.price <= 0) return stock;
+  const tone = toneFromNumber(livePrice.change_rate || livePrice.change);
+  return {
+    ...stock,
+    price: formatLivePrice(livePrice.price),
+    change: formatSignedPrice(livePrice.change),
+    changeRate: formatSignedPercent(livePrice.change_rate),
+    tone,
+    volume: livePrice.volume > 0 ? livePrice.volume.toLocaleString("ko-KR") : stock.volume,
+    tradingValue: livePrice.trading_value && livePrice.trading_value > 0 ? formatTradingValue(livePrice.trading_value) : stock.tradingValue,
+    source: "kis",
+  };
+}
+
+function numberOr(value: number | null | undefined, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function formatLivePrice(value: number) {
+  return Math.round(value).toLocaleString("ko-KR");
+}
+
+function formatOptionalPrice(value: number | null | undefined, fallback: string) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? formatLivePrice(value) : fallback;
+}
+
+function formatSignedPrice(value: number) {
+  if (!Number.isFinite(value) || value === 0) return "0";
+  return `${value > 0 ? "+" : "-"}${Math.abs(Math.round(value)).toLocaleString("ko-KR")}`;
+}
+
+function formatSignedPercent(value: number) {
+  if (!Number.isFinite(value) || value === 0) return "0.00%";
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatTradingValue(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  if (value >= 1_000_000_000_000) return `${trimFixed(value / 1_000_000_000_000, 1)}조`;
+  if (value >= 100_000_000) return `${Math.round(value / 100_000_000).toLocaleString("ko-KR")}억`;
+  return Math.round(value).toLocaleString("ko-KR");
+}
+
+function trimFixed(value: number, digits: number) {
+  return value.toFixed(digits).replace(/\.0$/, "");
+}
+
+function toneFromNumber(value: number): PriceTone {
+  if (value > 0) return "up";
+  if (value < 0) return "down";
+  return "neutral";
+}
+
+function getLiveQuoteState(status: LiveQuoteStatus, error: string | null) {
+  if (status === "connected") {
+    return {
+      connected: true,
+      label: "실시간",
+      title: "KIS 실시간 체결가 연결됨",
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    };
+  }
+  if (status === "polling") {
+    return {
+      connected: false,
+      label: "시세 갱신",
+      title: "KIS 현재가 REST 갱신 중",
+      className: "border-blue-100 bg-blue-50 text-blue-700",
+    };
+  }
+  if (status === "loading") {
+    return {
+      connected: false,
+      label: "조회 중",
+      title: "KIS 현재가 조회 중",
+      className: "border-slate-200 bg-white text-slate-500",
+    };
+  }
+  return {
+    connected: false,
+    label: "연결 오류",
+    title: error || "KIS 시세 연결 오류",
+    className: "border-red-100 bg-red-50 text-red-600",
+  };
 }
 
 function toNumber(value: string) {

@@ -12,7 +12,7 @@ export interface TradingStockSummary {
   volume: string;
   tradingValue: string;
   iconUrl?: string;
-  source: "mock";
+  source: "mock" | "kis";
 }
 
 export interface OrderBookRow {

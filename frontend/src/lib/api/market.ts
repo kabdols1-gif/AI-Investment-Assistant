@@ -2,7 +2,7 @@
  * Market API
  */
 
-import { apiGet, type ApiResponse } from "./client";
+import { apiGet } from "./client";
 
 export interface OrderbookData {
   stock_code: string;
@@ -25,14 +25,20 @@ export interface OrderbookResponse {
 }
 
 export interface PriceData {
+  stock_code?: string;
   price: number;
   change: number;
   change_rate: number;
+  open?: number;
   high: number;
   low: number;
+  previous_close?: number;
   volume: number;
+  trading_value?: number;
   w52_high: number;
   w52_low: number;
+  timestamp?: string | null;
+  source?: string;
 }
 
 export interface PriceResponse {
@@ -50,7 +56,7 @@ export async function getOrderbook(
 
 export async function getCurrentPrice(
   stockCode: string,
-  envDv: string = "vps"
+  envDv: string = "real"
 ): Promise<PriceResponse> {
   return apiGet<PriceResponse>(`/api/market/price/${stockCode}?env_dv=${envDv}`);
 }
