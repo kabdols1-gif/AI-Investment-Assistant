@@ -207,6 +207,7 @@ def _normalize_price_response(stock_code: str, raw: Any, *, market: dict[str, An
         "trading_value": _first_number(data, "trading_value", "bdy_dl_tw_amt", "dl_tw_amt", "acml_tr_pbmn", "trde_prica"),
         "w52_high": _first_number(data, "w52_high", "dy250_max_prc", "wk52_max_prc_p4", "w52_hgpr", "hts_avls") or 0,
         "w52_low": _first_number(data, "w52_low", "dy250_min_prc", "wk52_min_prc_p4", "w52_lwpr") or 0,
+        "margin_rate": _first_number(data, "margin_rate", "mrtgRt", "crdt_mgn_rt", "is_mgn_r_p4", "aplc_mgn_r_p4") or 0,
         "timestamp": str(data.get("timestamp") or data.get("datetime") or _market_timestamp(data) or datetime.now().isoformat()),
         "source": "kb_b2c" if market["is_domestic"] else "kb_b2c_overseas",
         "exchange": market.get("exchange"),

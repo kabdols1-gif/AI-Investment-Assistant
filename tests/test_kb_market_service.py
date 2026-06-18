@@ -21,6 +21,7 @@ def test_kb_b2c_current_price_is_normalized():
             "bdy_dl_tw_amt": "803000000000",
             "dy250_max_prc": "75,000",
             "dy250_min_prc": "55,000",
+            "crdt_mgn_rt": "40",
         }
     }
 
@@ -33,6 +34,7 @@ def test_kb_b2c_current_price_is_normalized():
     assert normalized["change"] == 1200
     assert normalized["change_rate"] == 1.88
     assert normalized["volume"] == 12345678
+    assert normalized["margin_rate"] == 40
     assert normalized["source"] == "kb_b2c"
 
 

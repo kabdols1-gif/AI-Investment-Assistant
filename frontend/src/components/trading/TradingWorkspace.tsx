@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Calculator,
-  ChevronDown,
   ExternalLink,
   Minus,
   Newspaper,
@@ -435,6 +434,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
               activeTab={marketInfoTab}
               data={liveData}
               executions={executionData}
+              livePrice={livePrice}
               orderbook={orderbookData}
               onTabChange={setMarketInfoTab}
             />
@@ -726,12 +726,14 @@ function MarketInfoPanel({
   activeTab,
   data,
   executions,
+  livePrice,
   orderbook,
   onTabChange,
 }: {
   activeTab: MarketInfoTab;
   data: TradingWorkspaceData;
   executions: ExecutionData[] | null;
+  livePrice: PriceData | null;
   orderbook: OrderbookData | null;
   onTabChange: (tab: MarketInfoTab) => void;
 }) {
@@ -754,9 +756,14 @@ function MarketInfoPanel({
         </div>
       </div>
 
-      {activeTab === "호가" && <OrderBookPanel orderbook={orderbook} rows={data.orderBook} currentPrice={data.stock.price} />}
+      {activeTab === "호가" && <OrderBookPanel orderbook={orderbook} rows={data.orderBook} currentPrice={data.stock.price} executions={executions} executionRows={data.executions} />}
       {activeTab === "체결" && <ExecutionPanel executions={executions} rows={data.executions} />}
-      {activeTab === "거래원" && <BrokerPanel rows={data.brokerTrades} />}
+      {activeTab === "거래원" && (
+        <>
+          <BrokerPanel rows={data.brokerTrades} />
+          <QuoteStatsPanel livePrice={livePrice} stock={data.stock} />
+        </>
+      )}
     </div>
   );
 }
@@ -803,21 +810,32 @@ function CurrentPricePanel({ livePrice, stock }: { livePrice: PriceData | null; 
   );
 }
 
-function OrderBookPanel({ orderbook, rows, currentPrice }: { orderbook: OrderbookData | null; rows: OrderBookRow[]; currentPrice: string }) {
-  const displayRows = orderbook ? orderbookToRows(orderbook) : rows.map((row) => toDisplayOrderBookRow(row, currentPrice));
+function OrderBookPanel({
+  orderbook,
+  rows,
+  currentPrice,
+  executions,
+  executionRows,
+}: {
+  orderbook: OrderbookData | null;
+  rows: OrderBookRow[];
+  currentPrice: string;
+  executions: ExecutionData[] | null;
+  executionRows: ExecutionRow[];
+}) {
+  const displayRows = (orderbook ? orderbookToRows(orderbook) : rows.map((row) => toDisplayOrderBookRow(row, currentPrice))).slice(0, ORDERBOOK_DISPLAY_DEPTH * 2);
+  const displayExecutions = executions && executions.length > 0 ? executionsToRows(executions).slice(0, 5) : executionRows.map(toPendingExecutionRow).slice(0, 5);
   const totalAskVolume = orderbook ? formatInteger(orderbook.total_ask_volume) : "0";
   const totalBidVolume = orderbook ? formatInteger(orderbook.total_bid_volume) : "0";
   const centerPrice = orderbook ? formatInteger(orderbook.current_price) : "0";
 
   return (
     <div className="overflow-hidden">
-      <div className="grid grid-cols-[0.7fr_1fr_0.8fr_0.9fr_1fr_0.7fr] border-b border-slate-100 bg-[#f8fafc] px-2 py-1.5 text-center text-[11px] font-extrabold text-slate-500">
-        <span>수량</span>
+      <div className="grid grid-cols-[1fr_0.85fr_0.9fr_1fr] border-b border-slate-100 bg-[#f8fafc] px-2 py-1.5 text-center text-[11px] font-extrabold text-slate-500">
         <span>매도잔량</span>
         <span>호가</span>
         <span>등락률</span>
         <span>매수잔량</span>
-        <span>수량</span>
       </div>
       <div>
         {displayRows.map((row, index) => {
@@ -826,16 +844,14 @@ function OrderBookPanel({ orderbook, rows, currentPrice }: { orderbook: Orderboo
             <div
               key={`${row.price}-${index}`}
               data-testid="trading-orderbook-row"
-              className={`grid grid-cols-[0.7fr_1fr_0.8fr_0.9fr_1fr_0.7fr] items-center px-2 py-1 text-center text-xs ${
+              className={`grid grid-cols-[1fr_0.85fr_0.9fr_1fr] items-center px-2 py-1 text-center text-xs ${
                 isCurrent ? "border-y border-[#1d4ed8] bg-blue-50" : index < 5 ? "bg-blue-50/35" : "bg-red-50/35"
               }`}
             >
-              <span className="text-slate-500">{index < 5 ? "" : "0"}</span>
               <span className="font-bold tabular-nums text-slate-600">{row.askQuantity ?? ""}</span>
               <span className={`font-black tabular-nums ${toneTextClass(row.tone)}`}>{row.price}</span>
               <span className={`font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.changeRate}</span>
               <span className="font-bold tabular-nums text-slate-600">{row.bidQuantity ?? ""}</span>
-              <span className="text-slate-500">{index >= 5 ? "" : ""}</span>
             </div>
           );
         })}
@@ -844,6 +860,26 @@ function OrderBookPanel({ orderbook, rows, currentPrice }: { orderbook: Orderboo
         <span className="text-blue-600">총매도 {totalAskVolume}</span>
         <span className="text-center text-slate-500">{centerPrice}</span>
         <span className="text-right text-red-500">총매수 {totalBidVolume}</span>
+      </div>
+      <div className="border-t border-slate-200 p-2">
+        <div className="mb-1.5 flex items-center justify-between px-1">
+          <span className="text-xs font-black text-[#071832]">체결목록</span>
+          <span className="text-[11px] font-bold text-slate-400">최근 5건</span>
+        </div>
+        <div className="grid grid-cols-4 rounded-t-md bg-[#f8fafc] px-2 py-1.5 text-center text-[11px] font-extrabold text-slate-500">
+          <span>시간</span>
+          <span>체결가</span>
+          <span>대비</span>
+          <span>체결량</span>
+        </div>
+        {displayExecutions.map((row, index) => (
+          <div key={`${row.time}-${row.price}-${row.quantity}-${index}`} className="grid grid-cols-4 border-b border-slate-100 px-2 py-1.5 text-center text-xs">
+            <span className="tabular-nums text-slate-500">{row.time}</span>
+            <span className={`font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.price}</span>
+            <span className={`font-bold tabular-nums ${toneTextClass(row.tone)}`}>{row.change}</span>
+            <span className="font-bold tabular-nums text-[#071832]">{row.quantity}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -893,6 +929,33 @@ function BrokerPanel({ rows }: { rows: BrokerTradeRow[] }) {
           <span className={`font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.net}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function QuoteStatsPanel({ livePrice, stock }: { livePrice: PriceData | null; stock: TradingWorkspaceData["stock"] }) {
+  const currency = livePrice?.currency;
+  const stats = [
+    ["시", formatOptionalPrice(livePrice?.open, "0", currency)],
+    ["고", formatOptionalPrice(livePrice?.high, "0", currency)],
+    ["저", formatOptionalPrice(livePrice?.low, "0", currency)],
+    ["52고", formatOptionalPrice(livePrice?.w52_high, "0", currency)],
+    ["52저", formatOptionalPrice(livePrice?.w52_low, "0", currency)],
+    ["증거금율", formatMarginRate(livePrice?.margin_rate)],
+    ["전일종가", formatOptionalPrice(livePrice?.previous_close, "0", currency)],
+    ["거래량", livePrice?.volume && livePrice.volume > 0 ? Math.round(livePrice.volume).toLocaleString("ko-KR") : stock.volume],
+  ];
+
+  return (
+    <div className="border-t border-slate-200 p-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {stats.map(([label, value]) => (
+          <div key={label} className="rounded-lg border border-slate-100 bg-[#f8fafc] px-3 py-2">
+            <p className="text-[11px] font-bold text-slate-500">{label}</p>
+            <p className="mt-1 text-xs font-black tabular-nums text-[#071832]">{value}</p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -968,14 +1031,6 @@ function OrderFormPanel({
       </div>
 
       <div className="space-y-2 p-3">
-        <div className="grid grid-cols-[86px_1fr] items-center gap-2">
-          <span className="text-xs font-extrabold text-[#071832]">계좌</span>
-          <button type="button" className="flex h-8 items-center justify-between rounded-lg border border-slate-200 bg-white px-2 text-xs font-bold text-[#071832] focus-ring">
-            0
-            <ChevronDown className="h-4 w-4 text-slate-500" aria-hidden="true" />
-          </button>
-        </div>
-
         {!isCancel && (
           <div className="grid grid-cols-[86px_1fr] items-center gap-2">
             <span className="text-xs font-extrabold text-[#071832]">{isModify ? "정정유형" : "주문유형"}</span>
@@ -1618,6 +1673,7 @@ function mergePriceData(current: PriceData | null, next: Partial<PriceData>): Pr
     trading_value: numberOr(next.trading_value, current?.trading_value ?? 0),
     w52_high: numberOr(next.w52_high, current?.w52_high ?? 0),
     w52_low: numberOr(next.w52_low, current?.w52_low ?? 0),
+    margin_rate: numberOr(next.margin_rate, current?.margin_rate ?? 0),
     timestamp: next.timestamp ?? current?.timestamp ?? null,
     source: next.source ?? current?.source,
     exchange: next.exchange ?? current?.exchange,
@@ -1671,8 +1727,8 @@ function formatLivePrice(value: number, currency?: string | null) {
   return Math.round(value).toLocaleString("ko-KR");
 }
 
-function formatOptionalPrice(value: number | null | undefined, fallback: string) {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? formatLivePrice(value) : fallback;
+function formatOptionalPrice(value: number | null | undefined, fallback: string, currency?: string | null) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? formatLivePrice(value, currency) : fallback;
 }
 
 function formatSignedPrice(value: number, currency?: string | null) {
@@ -1689,6 +1745,11 @@ function formatSignedPrice(value: number, currency?: string | null) {
 function formatSignedPercent(value: number) {
   if (!Number.isFinite(value) || value === 0) return "0%";
   return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatMarginRate(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "0%";
+  return `${trimFixed(value, value % 1 === 0 ? 0 : 2)}%`;
 }
 
 function formatTradingValue(value: number, currency?: string | null) {

@@ -66,6 +66,7 @@ export interface PriceData {
   trading_value?: number;
   w52_high: number;
   w52_low: number;
+  margin_rate?: number;
   timestamp?: string | null;
   source?: string;
   exchange?: string;
