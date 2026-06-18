@@ -36,6 +36,8 @@ class KBConfigRequest(BaseModel):
 
 
 class ConfigStatus(BaseModel):
+    runtime_mode: Literal["development", "production"] = "development"
+    runtime_label: str = "development"
     llm_provider: str
     llm_model: str | None = None
     llm_base_url: str | None = None
@@ -48,6 +50,11 @@ class ConfigStatus(BaseModel):
     broker_provider: str | None = "kb"
     broker_name: str | None = "KB증권"
     kb_base_url: str | None = None
+    kb_b2c_base_url: str | None = None
+    kb_b2c_token_base_url: str | None = None
+    kb_b2b_base_url: str | None = None
+    kb_credential_source: str | None = None
+    kb_environment: dict[str, str] | None = None
     live_enabled: bool = False
 
 

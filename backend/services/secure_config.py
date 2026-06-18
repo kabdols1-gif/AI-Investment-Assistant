@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.schemas.config import ConfigStatus
+from backend.services.openapi_runtime import apply_runtime_kb_defaults, get_runtime_settings
 from backend.services.masking import mask_value
 
 
@@ -110,6 +111,10 @@ def load_config() -> dict[str, Any]:
     return _merge_defaults(data)
 
 
+def effective_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    return apply_runtime_kb_defaults(_merge_defaults(config or load_config()))
+
+
 def save_config(config: dict[str, Any]) -> dict[str, Any]:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     normalized = _merge_defaults(config)
@@ -166,7 +171,8 @@ def update_kb_config(
 
 
 def config_status(config: dict[str, Any] | None = None) -> ConfigStatus:
-    config = config or load_config()
+    config = effective_config(config)
+    settings = get_runtime_settings()
     llm = config["llm"]
     kb = config["kb"]
     llm_key = llm.get("api_key") or ""
@@ -175,6 +181,8 @@ def config_status(config: dict[str, Any] | None = None) -> ConfigStatus:
     account = kb.get("account") or ""
     broker = kb.get("broker") or "kb"
     return ConfigStatus(
+        runtime_mode=settings.mode,
+        runtime_label="production" if settings.mode == "production" else "development",
         llm_provider=llm.get("provider") or DEFAULT_LLM_PROVIDER,
         llm_model=llm.get("model") or None,
         llm_base_url=llm.get("base_url") or None,
@@ -187,6 +195,11 @@ def config_status(config: dict[str, Any] | None = None) -> ConfigStatus:
         broker_provider=broker,
         broker_name=BROKER_NAMES.get(broker, broker),
         kb_base_url=kb.get("base_url") or None,
+        kb_b2c_base_url=kb.get("b2c_base_url") or None,
+        kb_b2c_token_base_url=kb.get("b2c_token_base_url") or None,
+        kb_b2b_base_url=kb.get("b2b_base_url") or None,
+        kb_credential_source=kb.get("credential_source") or None,
+        kb_environment=settings.active_environment.as_public_dict(),
         live_enabled=bool(config.get("security", {}).get("live_enabled", False)),
     )
 

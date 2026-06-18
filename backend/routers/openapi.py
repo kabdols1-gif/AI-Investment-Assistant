@@ -8,12 +8,11 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from backend.services.kb_openapi_service import (
-    DEFAULT_KB_B2C_APPS_BASE_URL,
-    DEFAULT_KB_B2C_TOKEN_BASE_URL,
     call_kb_b2c_openapi,
     issue_kb_b2c_token,
     register_kb_b2c_app,
 )
+from backend.services.openapi_runtime import get_runtime_settings
 
 
 router = APIRouter()
@@ -38,11 +37,14 @@ class KBOpenApiProxyRequest(BaseModel):
 
 @router.get("/kb/b2c/defaults")
 async def get_kb_b2c_defaults() -> dict[str, Any]:
+    settings = get_runtime_settings()
+    environment = settings.active_environment
     return {
         "status": "success",
         "data": {
-            "appsBaseUrl": DEFAULT_KB_B2C_APPS_BASE_URL,
-            "tokenBaseUrl": DEFAULT_KB_B2C_TOKEN_BASE_URL,
+            "runtimeMode": settings.mode,
+            "appsBaseUrl": environment.kb_b2c_base_url,
+            "tokenBaseUrl": environment.kb_b2c_token_base_url,
             "tokenPath": "/oauth2/token",
             "defaultApiPrefix": "/api/v1",
         },

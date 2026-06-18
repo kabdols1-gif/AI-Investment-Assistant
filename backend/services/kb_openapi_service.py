@@ -10,6 +10,7 @@ integration surface:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import urlparse
 
@@ -18,7 +19,9 @@ from fastapi import HTTPException
 
 from backend.schemas.config import KBConnectionTestResponse
 from backend.services import secure_config
+from backend.services.audit_log import append_audit_event
 from backend.services.masking import mask_sensitive
+from backend.services.openapi_runtime import get_runtime_settings
 
 
 DEFAULT_KB_B2C_APPS_BASE_URL = "https://dopenapi.kbsec.com"
@@ -42,7 +45,7 @@ def _device_header() -> dict[str, str]:
 
 
 def _kb_config() -> dict[str, Any]:
-    return secure_config.load_config()["kb"]
+    return secure_config.effective_config()["kb"]
 
 
 def _configured_b2c_base_url(kb_config: dict[str, Any]) -> str:
@@ -73,6 +76,26 @@ def _client_id_from_response(body: dict[str, Any]) -> str | None:
     return token_body.get("clientId") or token_body.get("clinetId")
 
 
+def _truncate_text(value: str, max_length: int = 4000) -> str:
+    if len(value) <= max_length:
+        return value
+    return f"{value[:max_length]}... [truncated {len(value) - max_length} chars]"
+
+
+def _response_body_for_log(text: str) -> Any:
+    try:
+        return mask_sensitive(json.loads(text))
+    except Exception:
+        return _truncate_text(text)
+
+
+def _record_openapi_call(event: str, payload: dict[str, Any]) -> None:
+    try:
+        append_audit_event(event, payload)
+    except Exception:
+        pass
+
+
 def _require_kb_credentials(kb_config: dict[str, Any]) -> tuple[str, str, str]:
     broker = kb_config.get("broker") or "kb"
     client_id = (kb_config.get("api_key") or "").strip()
@@ -86,20 +109,51 @@ def _require_kb_credentials(kb_config: dict[str, Any]) -> tuple[str, str, str]:
     return client_id, client_secret, base_url
 
 
+def _apps_base_url() -> str:
+    return get_runtime_settings().active_environment.kb_b2c_base_url.rstrip("/")
+
+
 async def register_kb_b2c_app(payload: dict[str, Any]) -> dict[str, Any]:
     """Register or issue a KB B2C app key using the official B2C apps endpoint."""
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
-            f"{DEFAULT_KB_B2C_APPS_BASE_URL}/service/apps",
+            f"{_apps_base_url()}/service/apps",
             headers={"Content-Type": "application/json"},
             json=payload,
         )
     try:
         body = response.json()
     except ValueError as exc:
+        _record_openapi_call(
+            "openapi.b2c.app_registration",
+            {
+                "provider": "kb",
+                "mode": "b2c",
+                "method": "POST",
+                "url": f"{_apps_base_url()}/service/apps",
+                "status_code": response.status_code,
+                "ok": False,
+                "request_body": payload,
+                "response_body": _truncate_text(response.text),
+                "error": "non_json_response",
+            },
+        )
         raise HTTPException(status_code=502, detail="KB B2C app registration response was not JSON.") from exc
 
+    _record_openapi_call(
+        "openapi.b2c.app_registration",
+        {
+            "provider": "kb",
+            "mode": "b2c",
+            "method": "POST",
+            "url": f"{_apps_base_url()}/service/apps",
+            "status_code": response.status_code,
+            "ok": 200 <= response.status_code < 300,
+            "request_body": payload,
+            "response_body": body,
+        },
+    )
     return {
         "status": response.status_code,
         "ok": 200 <= response.status_code < 300,
@@ -130,9 +184,37 @@ async def issue_kb_b2c_token() -> dict[str, Any]:
     try:
         body = response.json()
     except ValueError as exc:
+        _record_openapi_call(
+            "openapi.b2c.token",
+            {
+                "provider": "kb",
+                "mode": "b2c",
+                "method": "POST",
+                "url": f"{base_url}/oauth2/token",
+                "status_code": response.status_code,
+                "ok": False,
+                "request_body": payload,
+                "response_body": _truncate_text(response.text),
+                "error": "non_json_response",
+            },
+        )
         raise HTTPException(status_code=502, detail="KB B2C token response was not JSON.") from exc
 
     token = _token_from_response(body)
+    _record_openapi_call(
+        "openapi.b2c.token",
+        {
+            "provider": "kb",
+            "mode": "b2c",
+            "method": "POST",
+            "url": f"{base_url}/oauth2/token",
+            "status_code": response.status_code,
+            "ok": response.is_success and bool(token),
+            "request_body": payload,
+            "response_body": body,
+            "token_received": bool(token),
+        },
+    )
     if not response.is_success or not token:
         raise HTTPException(status_code=502, detail={"message": "KB B2C token issue failed.", "response": mask_sensitive(body)})
 
@@ -181,6 +263,23 @@ async def call_kb_b2c_openapi(
             json=body if method.upper() in {"POST", "PUT", "PATCH"} else None,
         )
 
+    _record_openapi_call(
+        "openapi.b2c.proxy",
+        {
+            "provider": "kb",
+            "mode": "b2c",
+            "method": method.upper(),
+            "url": target_url,
+            "path": path,
+            "status_code": response.status_code,
+            "ok": 200 <= response.status_code < 300,
+            "request_headers": outgoing_headers,
+            "request_body": body,
+            "response_headers": dict(response.headers),
+            "response_body": _response_body_for_log(response.text),
+            "issued_token": bool(token_result),
+        },
+    )
     return {
         "status": response.status_code,
         "ok": 200 <= response.status_code < 300,

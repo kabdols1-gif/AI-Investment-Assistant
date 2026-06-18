@@ -12,6 +12,8 @@ export type BrokerProvider =
   | "custom";
 
 export interface ConfigStatus {
+  runtime_mode: "development" | "production";
+  runtime_label: string;
   llm_provider: string;
   llm_model?: string | null;
   llm_base_url?: string | null;
@@ -24,6 +26,11 @@ export interface ConfigStatus {
   broker_provider?: BrokerProvider | string | null;
   broker_name?: string | null;
   kb_base_url?: string | null;
+  kb_b2c_base_url?: string | null;
+  kb_b2c_token_base_url?: string | null;
+  kb_b2b_base_url?: string | null;
+  kb_credential_source?: string | null;
+  kb_environment?: Record<string, string> | null;
   live_enabled: boolean;
 }
 

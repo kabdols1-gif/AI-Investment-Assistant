@@ -18,7 +18,14 @@ import { LightweightCandlestickChart } from "@/components/charts/LightweightChar
 import { useToast } from "@/components/ui";
 import { useMarketQuotes } from "@/hooks";
 import { getWsBase } from "@/lib/api/client";
-import { getKbCurrentPrice, type PriceData } from "@/lib/api/market";
+import {
+  getExecutions,
+  getKbCurrentPrice,
+  getOrderbook,
+  type ExecutionData,
+  type OrderbookData,
+  type PriceData,
+} from "@/lib/api/market";
 import type { BrokerProviderOption } from "@/lib/brokerProviders";
 import { tradingWorkspaceByStockId, watchItems } from "@/lib/mockData";
 import { formatQuoteDisplay as formatSharedQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
@@ -79,6 +86,8 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   const [livePrice, setLivePrice] = useState<PriceData | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveQuoteStatus>("idle");
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [orderbookData, setOrderbookData] = useState<OrderbookData | null>(null);
+  const [executionData, setExecutionData] = useState<ExecutionData[] | null>(null);
   const liveReconnectRef = useRef<number | null>(null);
   const { quotes: watchlistQuotes } = useMarketQuotes(watchlistItems.map((item) => item.symbol));
   const displayWatchlistItems = useMemo(
@@ -203,6 +212,57 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   }, [data.stock]);
 
   useEffect(() => {
+    if (!isKisRealtimeSupported(data.stock)) {
+      setOrderbookData(null);
+      setExecutionData(null);
+      return;
+    }
+
+    let isActive = true;
+    let marketDataTimer: number | null = null;
+    const stockCode = data.stock.code;
+
+    const fetchMarketDetails = async () => {
+      const [orderbookResult, executionsResult] = await Promise.allSettled([
+        getOrderbook(stockCode, "real"),
+        getExecutions(stockCode, "real", 10),
+      ]);
+
+      if (!isActive) return;
+
+      if (
+        orderbookResult.status === "fulfilled" &&
+        orderbookResult.value.status === "success" &&
+        orderbookResult.value.data
+      ) {
+        setOrderbookData(orderbookResult.value.data);
+      } else {
+        setOrderbookData(null);
+      }
+
+      if (
+        executionsResult.status === "fulfilled" &&
+        executionsResult.value.status === "success" &&
+        executionsResult.value.data
+      ) {
+        setExecutionData(executionsResult.value.data.executions ?? []);
+      } else {
+        setExecutionData(null);
+      }
+    };
+
+    void fetchMarketDetails();
+    marketDataTimer = window.setInterval(() => void fetchMarketDetails(), 15000);
+
+    return () => {
+      isActive = false;
+      if (marketDataTimer !== null) {
+        window.clearInterval(marketDataTimer);
+      }
+    };
+  }, [data.stock]);
+
+  useEffect(() => {
     setOrderDraft((current) => {
       if (current.stockId !== data.stock.id) {
         return { ...current, stockId: data.stock.id, price: liveData.stock.price };
@@ -292,7 +352,13 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
           </div>
 
           <div className="grid min-w-0 gap-2 2xl:grid-cols-[minmax(380px,1fr)_minmax(360px,0.76fr)]">
-            <MarketInfoPanel activeTab={marketInfoTab} data={liveData} onTabChange={setMarketInfoTab} />
+            <MarketInfoPanel
+              activeTab={marketInfoTab}
+              data={liveData}
+              executions={executionData}
+              orderbook={orderbookData}
+              onTabChange={setMarketInfoTab}
+            />
             <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption}>
               <OrderFormPanel
                 activeTab={orderTab}
@@ -579,10 +645,14 @@ function WatchItemLogo({ item }: { item: WatchItem }) {
 function MarketInfoPanel({
   activeTab,
   data,
+  executions,
+  orderbook,
   onTabChange,
 }: {
   activeTab: MarketInfoTab;
   data: TradingWorkspaceData;
+  executions: ExecutionData[] | null;
+  orderbook: OrderbookData | null;
   onTabChange: (tab: MarketInfoTab) => void;
 }) {
   return (
@@ -604,8 +674,8 @@ function MarketInfoPanel({
         </div>
       </div>
 
-      {activeTab === "호가" && <OrderBookPanel rows={data.orderBook} currentPrice={data.stock.price} />}
-      {activeTab === "체결" && <ExecutionPanel rows={data.executions} />}
+      {activeTab === "호가" && <OrderBookPanel orderbook={orderbook} rows={data.orderBook} currentPrice={data.stock.price} />}
+      {activeTab === "체결" && <ExecutionPanel executions={executions} rows={data.executions} />}
       {activeTab === "거래원" && <BrokerPanel rows={data.brokerTrades} />}
     </div>
   );
@@ -653,8 +723,11 @@ function CurrentPricePanel({ livePrice, stock }: { livePrice: PriceData | null; 
   );
 }
 
-function OrderBookPanel({ rows, currentPrice }: { rows: OrderBookRow[]; currentPrice: string }) {
-  const displayRows = rows.map((row) => toDisplayOrderBookRow(row, currentPrice));
+function OrderBookPanel({ orderbook, rows, currentPrice }: { orderbook: OrderbookData | null; rows: OrderBookRow[]; currentPrice: string }) {
+  const displayRows = orderbook ? orderbookToRows(orderbook) : rows.map((row) => toDisplayOrderBookRow(row, currentPrice));
+  const totalAskVolume = orderbook ? formatInteger(orderbook.total_ask_volume) : "0";
+  const totalBidVolume = orderbook ? formatInteger(orderbook.total_bid_volume) : "0";
+  const centerPrice = orderbook ? formatInteger(orderbook.current_price) : "0";
 
   return (
     <div className="overflow-hidden">
@@ -687,16 +760,16 @@ function OrderBookPanel({ rows, currentPrice }: { rows: OrderBookRow[]; currentP
         })}
       </div>
       <div className="grid grid-cols-3 border-t border-slate-200 px-3 py-2 text-xs font-extrabold">
-        <span className="text-blue-600">총매도 0</span>
-        <span className="text-center text-slate-500">0</span>
-        <span className="text-right text-red-500">총매수 0</span>
+        <span className="text-blue-600">총매도 {totalAskVolume}</span>
+        <span className="text-center text-slate-500">{centerPrice}</span>
+        <span className="text-right text-red-500">총매수 {totalBidVolume}</span>
       </div>
     </div>
   );
 }
 
-function ExecutionPanel({ rows }: { rows: ExecutionRow[] }) {
-  const displayRows = rows.map(toPendingExecutionRow);
+function ExecutionPanel({ executions, rows }: { executions: ExecutionData[] | null; rows: ExecutionRow[] }) {
+  const displayRows = executions && executions.length > 0 ? executionsToRows(executions) : rows.map(toPendingExecutionRow);
 
   return (
     <div className="p-2">
@@ -1003,6 +1076,51 @@ function ChartPanel({
       </div>
     </div>
   );
+}
+
+function orderbookToRows(orderbook: OrderbookData): OrderBookRow[] {
+  const currentPrice = orderbook.current_price || 0;
+  const askRows: OrderBookRow[] = (orderbook.ask_prices ?? []).map((price, index) => {
+    const volume = orderbook.ask_volumes?.[index] ?? 0;
+    return {
+      askQuantity: formatInteger(volume),
+      price: formatInteger(price),
+      changeRate: formatOrderbookRate(price, currentPrice),
+      tone: toneFromNumber(price - currentPrice),
+    };
+  });
+  const bidRows: OrderBookRow[] = (orderbook.bid_prices ?? []).map((price, index) => {
+    const volume = orderbook.bid_volumes?.[index] ?? 0;
+    return {
+      price: formatInteger(price),
+      changeRate: formatOrderbookRate(price, currentPrice),
+      bidQuantity: formatInteger(volume),
+      tone: toneFromNumber(price - currentPrice),
+    };
+  });
+
+  return [...askRows.reverse(), ...bidRows].filter((row) => row.price !== "0" || row.askQuantity !== "0" || row.bidQuantity !== "0");
+}
+
+function executionsToRows(executions: ExecutionData[]): ExecutionRow[] {
+  return executions.map((execution, index) => ({
+    time: execution.time || String(index + 1),
+    price: formatInteger(execution.price),
+    change: formatSignedPrice(execution.change),
+    quantity: formatInteger(execution.quantity),
+    tone: execution.side === "buy" ? "up" : execution.side === "sell" ? "down" : toneFromNumber(execution.change),
+  }));
+}
+
+function formatOrderbookRate(price: number, currentPrice: number) {
+  if (!Number.isFinite(price) || !Number.isFinite(currentPrice) || price <= 0 || currentPrice <= 0) {
+    return "0%";
+  }
+  return formatSignedPercent(((price - currentPrice) / currentPrice) * 100);
+}
+
+function formatInteger(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value).toLocaleString("ko-KR") : "0";
 }
 
 function toDisplayOrderBookRow(row: OrderBookRow, currentPrice: string): OrderBookRow {
@@ -1427,7 +1545,7 @@ function mergeLiveStock(stock: TradingWorkspaceData["stock"], livePrice: PriceDa
     tone,
     volume: livePrice.volume > 0 ? livePrice.volume.toLocaleString("ko-KR") : stock.volume,
     tradingValue: livePrice.trading_value && livePrice.trading_value > 0 ? formatTradingValue(livePrice.trading_value) : stock.tradingValue,
-    source: livePrice.source === "kb" ? "kb" : "kis",
+    source: livePrice.source?.startsWith("kb") ? "kb" : "kis",
   };
 }
 

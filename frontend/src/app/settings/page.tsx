@@ -8,7 +8,7 @@ import { setSharedConfigStatus } from "@/hooks";
 import { getConfigStatus, saveKBConfig, saveLLMConfig, testKBConnection } from "@/lib/api/config";
 import { getSymbolMasterStatus, refreshSymbolMaster, type SymbolMasterCollectResult, type SymbolMasterStatus } from "@/lib/api/symbols";
 import { BROKER_PROVIDER_OPTIONS, getBrokerProviderOption } from "@/lib/brokerProviders";
-import { DEFAULT_CONFIG_STATUS } from "@/lib/configStatus";
+import { DEFAULT_CONFIG_STATUS, isBrokerConnected } from "@/lib/configStatus";
 import { coerceLLMProvider, DEFAULT_LLM_PROVIDER, getDefaultLLMModel, getLLMProviderOption, LLM_PROVIDER_OPTIONS } from "@/lib/llmProviders";
 import type { BrokerProvider, ConfigStatus, KBConnectionTestResponse, LLMProvider } from "@/types/config";
 
@@ -51,7 +51,7 @@ export default function SettingsPage() {
   const modelSelectValue = selectedModelOption ? llmModel : "__custom";
   const selectedBroker = getBrokerProviderOption(brokerProvider);
   const aiConnected = Boolean(status?.llm_key_registered);
-  const brokerConnected = Boolean(status?.kb_key_registered && status?.kb_secret_registered && status?.kb_account_masked && status?.kb_base_url);
+  const brokerConnected = isBrokerConnected(status);
 
   const applyConfig = (config: ConfigStatus) => {
     setStatus(config);
