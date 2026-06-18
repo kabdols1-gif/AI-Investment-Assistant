@@ -140,7 +140,7 @@ export default function ExecutePage() {
     if (signal.action === "BUY" || signal.action === "SELL") {
       // Fetch current price
       try {
-        const priceResponse = await getKbCurrentPrice(signal.code, "real");
+        const priceResponse = await getKbCurrentPrice(signal.code, "real", signal.exchange);
         if (priceResponse.status === "success" && priceResponse.data) {
           setPriceData(priceResponse.data);
         } else {

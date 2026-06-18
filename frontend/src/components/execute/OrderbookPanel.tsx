@@ -9,6 +9,7 @@ import { getWsBase } from "@/lib/api/client";
 interface OrderbookPanelProps {
   stockCode: string;
   stockName?: string;
+  exchange?: string | null;
   onPriceSelect?: (price: number) => void;
   className?: string;
   /** Enable WebSocket real-time updates */
@@ -18,6 +19,7 @@ interface OrderbookPanelProps {
 export function OrderbookPanel({
   stockCode,
   stockName,
+  exchange,
   onPriceSelect,
   className,
   realtime = true,
@@ -39,7 +41,7 @@ export function OrderbookPanel({
     setError(null);
 
     try {
-      const response = await getOrderbook(stockCode);
+      const response = await getOrderbook(stockCode, "real", exchange);
       // Don't update state if unmounted during async operation
       if (!isMountedRef.current) return;
 
@@ -56,7 +58,7 @@ export function OrderbookPanel({
         setIsLoading(false);
       }
     }
-  }, [stockCode]);
+  }, [stockCode, exchange]);
 
   // WebSocket connection for real-time updates
   const connectWebSocket = useCallback(() => {
@@ -70,7 +72,10 @@ export function OrderbookPanel({
     }
 
     try {
-      const wsUrl = `${getWsBase()}/api/market/ws/${stockCode}`;
+      const params = new URLSearchParams();
+      if (exchange) params.set("exchange", exchange);
+      const query = params.toString();
+      const wsUrl = `${getWsBase()}/api/market/ws/${encodeURIComponent(stockCode)}${query ? `?${query}` : ""}`;
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
@@ -122,7 +127,7 @@ export function OrderbookPanel({
       setIsConnected(false);
       fetchOrderbook();
     }
-  }, [stockCode, realtime, fetchOrderbook]);
+  }, [stockCode, exchange, realtime, fetchOrderbook]);
 
   // Initial fetch and WebSocket setup
   useEffect(() => {
@@ -195,6 +200,11 @@ export function OrderbookPanel({
           <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
             호가창
           </span>
+          {stockName && (
+            <span className="max-w-24 truncate text-xs text-slate-400">
+              {stockName}
+            </span>
+          )}
           {realtime && (
             <span
               className={cn(
@@ -250,7 +260,7 @@ export function OrderbookPanel({
                     {volume?.toLocaleString() ?? "-"}
                   </span>
                   <span className="text-sm font-mono tabular-nums text-red-500 font-medium">
-                    {price?.toLocaleString() ?? "-"}
+                    {formatOrderbookPrice(price, orderbook.currency)}
                   </span>
                 </div>
               </button>
@@ -262,7 +272,7 @@ export function OrderbookPanel({
         <div className="bg-slate-100 dark:bg-slate-800 px-3 py-2 flex items-center justify-between">
           <span className="text-xs text-slate-500">현재가</span>
           <span className="font-mono font-bold text-sm">
-            {orderbook.current_price?.toLocaleString() ?? "-"}원
+            {formatOrderbookPrice(orderbook.current_price, orderbook.currency)}
           </span>
         </div>
 
@@ -286,7 +296,7 @@ export function OrderbookPanel({
                 {/* Content */}
                 <div className="relative z-10 flex items-center justify-between w-full px-3 py-1.5">
                   <span className="text-sm font-mono tabular-nums text-blue-500 font-medium">
-                    {price?.toLocaleString() ?? "-"}
+                    {formatOrderbookPrice(price, orderbook.currency)}
                   </span>
                   <span className="text-xs text-slate-500 font-mono tabular-nums">
                     {volume?.toLocaleString() ?? "-"}
@@ -311,6 +321,30 @@ export function OrderbookPanel({
       </div>
     </div>
   );
+}
+
+function formatOrderbookPrice(value: number | null | undefined, currency?: string | null) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "-";
+  if (isForeignCurrency(currency)) {
+    return `${currencySymbol(currency)}${value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    })}`;
+  }
+  return `${Math.round(value).toLocaleString("ko-KR")}원`;
+}
+
+function isForeignCurrency(currency?: string | null) {
+  const normalized = String(currency || "").trim().toUpperCase();
+  return Boolean(normalized && normalized !== "KRW");
+}
+
+function currencySymbol(currency?: string | null) {
+  const normalized = String(currency || "").trim().toUpperCase();
+  if (normalized === "USD") return "$";
+  if (normalized === "JPY") return "JPY ";
+  if (normalized === "EUR") return "EUR ";
+  return normalized ? `${normalized} ` : "";
 }
 
 export default OrderbookPanel;

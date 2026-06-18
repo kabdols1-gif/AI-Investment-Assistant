@@ -21,6 +21,7 @@ export interface SignalResult {
   strength: number;
   reason: string;
   target_price?: number;
+  exchange?: string | null;
 }
 
 import type { BuilderState } from "./builder";

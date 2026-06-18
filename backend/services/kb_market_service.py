@@ -4,9 +4,12 @@ The OpenAPI developer project ships B2C XML/TR definitions for market data.  We
 call those TRs directly through the KB OpenAPI proxy helper and normalize the
 response shape used by the frontend:
 
-- IVU10140: stock current price
-- IVU10070: stock orderbook
-- IVU10080: intraday executions / time and sales
+- IVU10140: domestic stock current price
+- IVU10070: domestic stock orderbook
+- IVU10080: domestic intraday executions / time and sales
+- GSS10030: overseas stock current price
+- GSS10040: overseas stock orderbook
+- GSA10020: overseas intraday executions / time and sales
 """
 
 from __future__ import annotations
@@ -21,67 +24,108 @@ from fastapi import HTTPException
 from backend.services.kb_openapi_service import call_kb_b2c_openapi
 
 
-KB_CURRENT_PRICE_TR = "ivu10140"
-KB_ORDERBOOK_TR = "ivu10070"
-KB_EXECUTIONS_TR = "ivu10080"
+KB_DOMESTIC_CURRENT_PRICE_TR = "ivu10140"
+KB_DOMESTIC_ORDERBOOK_TR = "ivu10070"
+KB_DOMESTIC_EXECUTIONS_TR = "ivu10080"
+KB_OVERSEAS_CURRENT_PRICE_TR = "gss10030"
+KB_OVERSEAS_ORDERBOOK_TR = "gss10040"
+KB_OVERSEAS_EXECUTIONS_TR = "gsa10020"
 DEFAULT_ORDERBOOK_OVERTIME_MARKET_CLASS = "1"
 DEFAULT_EXECUTION_COUNT = 10
+DEFAULT_OVERSEAS_EXCHANGE_CODE = "NAS"
+OVERSEAS_EXCHANGE_CODES = {
+    "NAS": "NAS",
+    "NASDAQ": "NAS",
+    "NYS": "NYS",
+    "NYSE": "NYS",
+    "AMS": "AMS",
+    "AMEX": "AMS",
+}
 
 
 class KBMarketServiceError(RuntimeError):
     """Raised when KB market-data lookup cannot be completed."""
 
 
-async def get_kb_current_price(stock_code: str, env_dv: str = "real") -> dict[str, Any] | None:
+async def get_kb_current_price(stock_code: str, env_dv: str = "real", exchange: str | None = None) -> dict[str, Any] | None:
     """Fetch and normalize current price data from KB Securities."""
 
-    code = _normalize_stock_code(stock_code)
-    raw = await _call_kb_b2c_tr(
-        KB_CURRENT_PRICE_TR,
-        {
-            "excg_clsf": "1",
-            "shrt_cd": code,
-        },
-    )
+    market = _resolve_market_identifier(stock_code, exchange)
+    if market["is_domestic"]:
+        raw = await _call_kb_b2c_tr(
+            KB_DOMESTIC_CURRENT_PRICE_TR,
+            {
+                "excg_clsf": "1",
+                "shrt_cd": market["stock_code"],
+            },
+        )
+    else:
+        raw = await _call_kb_b2c_tr(
+            KB_OVERSEAS_CURRENT_PRICE_TR,
+            {
+                "krx_cd": market["krx_cd"],
+                "is_cd": market["is_cd"],
+            },
+        )
 
-    return _normalize_price_response(code, raw)
+    return _normalize_price_response(market["stock_code"], raw, market=market)
 
 
-async def get_kb_orderbook(stock_code: str, env_dv: str = "real") -> dict[str, Any] | None:
+async def get_kb_orderbook(stock_code: str, env_dv: str = "real", exchange: str | None = None) -> dict[str, Any] | None:
     """Fetch and normalize 10-level orderbook data from KB Securities B2C."""
 
-    code = _normalize_stock_code(stock_code)
-    raw = await _call_kb_b2c_tr(
-        KB_ORDERBOOK_TR,
-        {
-            "is_cd": code,
-            "ovtm_mkt_clsf": DEFAULT_ORDERBOOK_OVERTIME_MARKET_CLASS,
-        },
-    )
+    market = _resolve_market_identifier(stock_code, exchange)
+    if market["is_domestic"]:
+        raw = await _call_kb_b2c_tr(
+            KB_DOMESTIC_ORDERBOOK_TR,
+            {
+                "is_cd": market["stock_code"],
+                "ovtm_mkt_clsf": DEFAULT_ORDERBOOK_OVERTIME_MARKET_CLASS,
+            },
+        )
+    else:
+        raw = await _call_kb_b2c_tr(
+            KB_OVERSEAS_ORDERBOOK_TR,
+            {
+                "krx_cd": market["krx_cd"],
+                "is_cd": market["is_cd"],
+            },
+        )
 
-    return _normalize_orderbook_response(code, raw)
+    return _normalize_orderbook_response(market["stock_code"], raw, market=market)
 
 
 async def get_kb_executions(
     stock_code: str,
     env_dv: str = "real",
     count: int = DEFAULT_EXECUTION_COUNT,
+    exchange: str | None = None,
 ) -> dict[str, Any] | None:
     """Fetch and normalize time-and-sales execution data from KB Securities."""
 
-    code = _normalize_stock_code(stock_code)
+    market = _resolve_market_identifier(stock_code, exchange)
     safe_count = max(1, min(int(count or DEFAULT_EXECUTION_COUNT), 50))
-    raw = await _call_kb_b2c_tr(
-        KB_EXECUTIONS_TR,
-        {
-            "excg_clsf": "1",
-            "is_cd": code,
-            "ovtm_mkt_clsf": DEFAULT_ORDERBOOK_OVERTIME_MARKET_CLASS,
-            "inq_cnt": str(safe_count),
-        },
-    )
+    if market["is_domestic"]:
+        raw = await _call_kb_b2c_tr(
+            KB_DOMESTIC_EXECUTIONS_TR,
+            {
+                "excg_clsf": "1",
+                "is_cd": market["stock_code"],
+                "ovtm_mkt_clsf": DEFAULT_ORDERBOOK_OVERTIME_MARKET_CLASS,
+                "inq_cnt": str(safe_count),
+            },
+        )
+    else:
+        raw = await _call_kb_b2c_tr(
+            KB_OVERSEAS_EXECUTIONS_TR,
+            {
+                "krx_cd": market["krx_cd"],
+                "is_cd": market["is_cd"],
+                "rcrd_c": str(safe_count),
+            },
+        )
 
-    return _normalize_executions_response(code, raw)
+    return _normalize_executions_response(market["stock_code"], raw, market=market)
 
 
 async def _call_kb_b2c_tr(transaction_code: str, data_body: dict[str, Any]) -> dict[str, Any]:
@@ -119,7 +163,8 @@ def _device_header() -> dict[str, str]:
     }
 
 
-def _normalize_price_response(stock_code: str, raw: Any) -> dict[str, Any] | None:
+def _normalize_price_response(stock_code: str, raw: Any, *, market: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    market = market or _resolve_market_identifier(stock_code)
     data = _first_dict_from_response(raw)
     price = _first_number(
         data,
@@ -128,6 +173,7 @@ def _normalize_price_response(stock_code: str, raw: Any) -> dict[str, Any] | Non
         "currentPrice",
         "now_price",
         "now_prc",
+        "now_prc_p4",
         "nowPrc",
         "stck_prpr",
         "trade_price",
@@ -139,46 +185,56 @@ def _normalize_price_response(stock_code: str, raw: Any) -> dict[str, Any] | Non
 
     change_sign = data.get("bdy_cmpr_ccd") or data.get("prdy_vrss_sign") or data.get("sign")
     change = _signed_by_compare_code(
-        _first_number(data, "change", "price_change", "changePrice", "bdy_cmpr", "prdy_vrss", "vs"),
+        _first_number(data, "change", "price_change", "changePrice", "bdy_cmpr", "bdy_cmpr_p4", "prdy_vrss", "vs"),
         change_sign,
     )
     change_rate = _signed_by_compare_code(
-        _first_number(data, "change_rate", "changeRate", "rate", "up_dwn_r_p2", "prdy_ctrt", "fltRt"),
+        _first_number(data, "change_rate", "changeRate", "rate", "up_dwn_r_p2", "bdy_up_dwn_r_p2", "prdy_ctrt", "fltRt"),
         change_sign,
     )
 
     return {
         "stock_code": str(data.get("stock_code") or data.get("symbol") or stock_code),
-        "stock_name": str(data.get("stock_name") or data.get("is_nm") or ""),
+        "stock_name": str(data.get("stock_name") or data.get("is_nm") or data.get("is_nm1") or ""),
         "price": price,
         "change": change or 0,
         "change_rate": change_rate or 0,
-        "open": _first_number(data, "open", "open_price", "opn_prc", "stck_oprc"),
-        "high": _first_number(data, "high", "high_price", "hgh_prc", "stck_hgpr") or 0,
-        "low": _first_number(data, "low", "low_price", "lw_prc", "stck_lwpr") or 0,
-        "previous_close": _first_number(data, "previous_close", "prev_close", "bdy_cls_prc", "krx_bdy_clpr", "stck_sdpr"),
-        "volume": int(_first_number(data, "volume", "acml_vlm", "acml_vol", "bdy_vlm", "cntg_vol", "trde_qty") or 0),
-        "trading_value": _first_number(data, "trading_value", "bdy_dl_tw_amt", "acml_tr_pbmn", "trde_prica"),
-        "w52_high": _first_number(data, "w52_high", "dy250_max_prc", "w52_hgpr", "hts_avls") or 0,
-        "w52_low": _first_number(data, "w52_low", "dy250_min_prc", "w52_lwpr") or 0,
-        "timestamp": str(data.get("timestamp") or data.get("datetime") or datetime.now().isoformat()),
-        "source": "kb_b2c",
+        "open": _first_number(data, "open", "open_price", "opn_prc", "opn_prc_p4", "stck_oprc"),
+        "high": _first_number(data, "high", "high_price", "hgh_prc", "hgh_prc_p4", "stck_hgpr") or 0,
+        "low": _first_number(data, "low", "low_price", "lw_prc", "lw_prc_p4", "stck_lwpr") or 0,
+        "previous_close": _first_number(data, "previous_close", "prev_close", "bdy_cls_prc", "sprc_p4", "krx_bdy_clpr", "stck_sdpr"),
+        "volume": int(_first_number(data, "volume", "acml_vlm", "acml_vol", "bdy_vlm", "vlm", "cntg_vol", "trde_qty") or 0),
+        "trading_value": _first_number(data, "trading_value", "bdy_dl_tw_amt", "dl_tw_amt", "acml_tr_pbmn", "trde_prica"),
+        "w52_high": _first_number(data, "w52_high", "dy250_max_prc", "wk52_max_prc_p4", "w52_hgpr", "hts_avls") or 0,
+        "w52_low": _first_number(data, "w52_low", "dy250_min_prc", "wk52_min_prc_p4", "w52_lwpr") or 0,
+        "timestamp": str(data.get("timestamp") or data.get("datetime") or _market_timestamp(data) or datetime.now().isoformat()),
+        "source": "kb_b2c" if market["is_domestic"] else "kb_b2c_overseas",
+        "exchange": market.get("exchange"),
+        "currency": _first_text(data.get("dl_crncy"), data.get("currency")) or ("KRW" if market["is_domestic"] else "USD"),
     }
 
 
-def _normalize_orderbook_response(stock_code: str, raw: Any) -> dict[str, Any] | None:
+def _normalize_orderbook_response(stock_code: str, raw: Any, *, market: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    market = market or _resolve_market_identifier(stock_code)
     data = _first_dict_from_response(raw)
     if not data:
         return None
 
-    ask_prices = [_number_or_zero(data.get(f"s{level}_aprc")) for level in range(1, 11)]
-    bid_prices = [_number_or_zero(data.get(f"b{level}_aprc")) for level in range(1, 11)]
+    ask_prices = [
+        _numeric_or_zero(_first_number(data, f"s{level}_aprc", f"s_askprc{level}_p4", f"ask_price_{level}"))
+        for level in range(1, 11)
+    ]
+    bid_prices = [
+        _numeric_or_zero(_first_number(data, f"b{level}_aprc", f"b_askprc{level}_p4", f"bid_price_{level}"))
+        for level in range(1, 11)
+    ]
     ask_volumes = [
         _number_or_zero(
             _first_raw_value(
                 data,
                 f"s_pstn_s{level}_aprc_q",
                 f"b_pstn_s{level}_aprc_q",
+                f"s_askprc_q{level}",
                 f"ask_volume_{level}",
             )
         )
@@ -190,6 +246,7 @@ def _normalize_orderbook_response(stock_code: str, raw: Any) -> dict[str, Any] |
                 data,
                 f"b_pstn_b{level}_aprc_q",
                 f"s_pstn_b{level}_aprc_q",
+                f"b_askprc_q{level}",
                 f"bid_volume_{level}",
             )
         )
@@ -201,22 +258,25 @@ def _normalize_orderbook_response(stock_code: str, raw: Any) -> dict[str, Any] |
 
     return {
         "stock_code": stock_code,
-        "stock_name": str(data.get("stock_name") or data.get("is_nm") or ""),
-        "current_price": _number_or_zero(data.get("now_prc")),
+        "stock_name": str(data.get("stock_name") or data.get("is_nm") or data.get("is_nm1") or ""),
+        "current_price": _numeric_or_zero(_first_number(data, "now_prc", "now_prc_p4", "sprc_p4")),
         "ask_prices": ask_prices,
         "ask_volumes": ask_volumes,
         "bid_prices": bid_prices,
         "bid_volumes": bid_volumes,
         "total_ask_volume": int(_first_number(data, "s_askprc_tl_q", "total_ask_volume") or sum(ask_volumes)),
         "total_bid_volume": int(_first_number(data, "b_askprc_tl_q", "total_bid_volume") or sum(bid_volumes)),
-        "expected_price": _number_or_zero(data.get("expct_ccls_prc")),
-        "expected_volume": int(_number_or_zero(data.get("expct_ccls_q"))),
-        "timestamp": datetime.now().isoformat(),
-        "source": "kb_b2c",
+        "expected_price": _numeric_or_zero(_first_number(data, "expct_ccls_prc", "cas_expct_ccls_prc_p4")),
+        "expected_volume": int(_number_or_zero(_first_raw_value(data, "expct_ccls_q", "cas_expct_ccls_q"))),
+        "timestamp": _market_timestamp(data) or datetime.now().isoformat(),
+        "source": "kb_b2c" if market["is_domestic"] else "kb_b2c_overseas",
+        "exchange": market.get("exchange"),
+        "currency": _first_text(data.get("dl_crncy"), data.get("currency")) or ("KRW" if market["is_domestic"] else "USD"),
     }
 
 
-def _normalize_executions_response(stock_code: str, raw: Any) -> dict[str, Any] | None:
+def _normalize_executions_response(stock_code: str, raw: Any, *, market: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    market = market or _resolve_market_identifier(stock_code)
     data = _data_body(raw)
     records = _record_list(data, "out", "out2", "records", "items", "list")
     if not records:
@@ -235,7 +295,7 @@ def _normalize_executions_response(stock_code: str, raw: Any) -> dict[str, Any] 
                 "time": _format_time(str(_first_raw_value(record, "time", "ccls_tm", "tm", "kor_tm") or "")),
                 "price": price or 0,
                 "change": change,
-                "change_rate": _signed_by_compare_code(_first_number(record, "change_rate", "up_dwn_r_p2"), compare_code) or 0,
+                "change_rate": _signed_by_compare_code(_first_number(record, "change_rate", "up_dwn_r_p2", "bdy_up_dwn_r_p2"), compare_code) or 0,
                 "quantity": int(quantity or 0),
                 "side": _execution_side(record.get("sell_buy_ccd") or record.get("ccls_clsf")),
                 "volume": int(_first_number(record, "volume", "acml_vlm", "vlm") or 0),
@@ -246,7 +306,9 @@ def _normalize_executions_response(stock_code: str, raw: Any) -> dict[str, Any] 
         "stock_code": stock_code,
         "executions": executions,
         "timestamp": datetime.now().isoformat(),
-        "source": "kb_b2c",
+        "source": "kb_b2c" if market["is_domestic"] else "kb_b2c_overseas",
+        "exchange": market.get("exchange"),
+        "currency": _first_text(data.get("dl_crncy"), data.get("currency")) or ("KRW" if market["is_domestic"] else "USD"),
     }
 
 
@@ -299,7 +361,7 @@ def _record_list(data: Any, *keys: str) -> list[dict[str, Any]]:
 
 def _first_number(data: dict[str, Any], *keys: str) -> float | None:
     for key in keys:
-        number = _to_number(data.get(key))
+        number = _to_number_for_key(key, data.get(key))
         if number is not None:
             return number
     return None
@@ -310,6 +372,14 @@ def _first_raw_value(data: dict[str, Any], *keys: str) -> Any:
         if key in data and data.get(key) not in (None, ""):
             return data.get(key)
     return None
+
+
+def _first_text(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
 
 
 def _to_number(value: Any) -> float | None:
@@ -328,9 +398,34 @@ def _to_number(value: Any) -> float | None:
     return None
 
 
-def _number_or_zero(value: Any) -> int:
+def _to_number_for_key(key: str, value: Any) -> float | None:
     number = _to_number(value)
+    if number is None:
+        return None
+
+    if not isinstance(value, str):
+        return number
+
+    cleaned = re.sub(r"[^0-9.+-]", "", value)
+    if "." in cleaned:
+        return number
+
+    lower_key = key.lower()
+    if lower_key.endswith("_p4") and len(cleaned.lstrip("+-")) > 4:
+        return number / 10000
+    if lower_key.endswith("_p2") and len(cleaned.lstrip("+-")) > 2:
+        return number / 100
+    return number
+
+
+def _number_or_zero(value: Any) -> int:
+    number = value if isinstance(value, int | float) and not isinstance(value, bool) else _to_number(value)
     return int(number or 0)
+
+
+def _numeric_or_zero(value: Any) -> float:
+    number = value if isinstance(value, int | float) and not isinstance(value, bool) else _to_number(value)
+    return number or 0
 
 
 def _signed_by_compare_code(value: float | None, code: Any) -> float | None:
@@ -355,15 +450,58 @@ def _execution_side(code: Any) -> str:
 
 def _format_time(value: str) -> str:
     digits = re.sub(r"\D", "", value)
+    if len(digits) >= 8:
+        return f"{digits[:2]}:{digits[2:4]}:{digits[4:6]}"
     if len(digits) >= 6:
         return f"{digits[-6:-4]}:{digits[-4:-2]}:{digits[-2:]}"
     return value or "0"
 
 
+def _resolve_market_identifier(stock_code: str, exchange: str | None = None) -> dict[str, Any]:
+    code = _normalize_stock_code(stock_code)
+    is_domestic = _is_domestic_stock_code(code) and not _is_overseas_exchange(exchange)
+    exchange_code = "KRX" if is_domestic else _normalize_overseas_exchange_code(exchange)
+    return {
+        "stock_code": code,
+        "is_cd": code,
+        "krx_cd": exchange_code,
+        "exchange": "KRX" if is_domestic else exchange_code,
+        "is_domestic": is_domestic,
+    }
+
+
+def _is_domestic_stock_code(stock_code: str) -> bool:
+    return bool(re.fullmatch(r"\d{6}", stock_code))
+
+
+def _is_overseas_exchange(exchange: str | None) -> bool:
+    normalized = re.sub(r"[^0-9A-Za-z]", "", str(exchange or "")).upper()
+    if not normalized:
+        return False
+    return normalized not in {"KR", "KOR", "KRX", "KOSPI", "KOSDAQ", "NXT"}
+
+
+def _normalize_overseas_exchange_code(exchange: str | None) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z]", "", str(exchange or "")).upper()
+    if not normalized or normalized in {"KR", "KOR", "KRX", "KOSPI", "KOSDAQ", "NXT"}:
+        return DEFAULT_OVERSEAS_EXCHANGE_CODE
+    return OVERSEAS_EXCHANGE_CODES.get(normalized, normalized[:3])
+
+
+def _market_timestamp(data: dict[str, Any]) -> str:
+    date_value = _first_text(data.get("kor_dt"), data.get("dt"), data.get("bsnss_dt"))
+    time_value = _first_text(data.get("kor_tm"), data.get("tm"))
+    if date_value and time_value:
+        return f"{date_value}T{_format_time(time_value)}"
+    return ""
+
+
 def _normalize_stock_code(stock_code: str) -> str:
-    normalized = re.sub(r"[^0-9A-Za-z]", "", str(stock_code or "")).upper()
+    normalized = re.sub(r"[^0-9A-Za-z.-]", "", str(stock_code or "")).upper()
     if normalized.startswith("A") and normalized[1:].isdigit():
         normalized = normalized[1:]
+    if normalized.isdigit():
+        normalized = normalized.zfill(6)
     if not normalized:
         raise KBMarketServiceError("Stock code is required for KB B2C market data.")
     return normalized

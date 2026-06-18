@@ -41,6 +41,7 @@ export function OrderConfirmModal({
   const currentPrice = priceData?.price || 0;
   const change = priceData?.change || 0;
   const changeRate = priceData?.change_rate || 0;
+  const currency = priceData?.currency ?? null;
 
   const [quantity, setQuantity] = useState(1);
   const [orderType, setOrderType] = useState<OrderType>("limit");
@@ -129,6 +130,7 @@ export function OrderConfirmModal({
               <OrderbookPanel
                 stockCode={signal.code}
                 stockName={signal.name}
+                exchange={signal.exchange ?? priceData?.exchange}
                 onPriceSelect={handlePriceSelect}
                 realtime={true}
               />
@@ -174,9 +176,9 @@ export function OrderConfirmModal({
                       : "text-slate-900 dark:text-slate-100"
                   )}
                 >
-                  {currentPrice.toLocaleString()}
+                  {formatCurrencyPrice(currentPrice, currency)}
                 </span>
-                <span className="text-sm text-slate-500">원</span>
+                <span className="text-sm text-slate-500">{currencyLabel(currency)}</span>
               </div>
 
               {/* Change Info */}
@@ -193,8 +195,7 @@ export function OrderConfirmModal({
                 >
                   <span>
                     {change > 0 ? "▲" : change < 0 ? "▼" : ""}{" "}
-                    {change > 0 ? "+" : ""}
-                    {change.toLocaleString()}
+                    {formatSignedCurrencyPrice(change, currency)}
                   </span>
                   <span className="opacity-70">
                     ({changeRate > 0 ? "+" : ""}
@@ -279,7 +280,7 @@ export function OrderConfirmModal({
                     className="w-full px-4 py-3 pr-12 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 focus:ring-2 focus:ring-primary focus:border-transparent"
                   />
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">
-                    원
+                    {currencyLabel(currency)}
                   </span>
                 </div>
                 {showOrderbook && (
@@ -335,7 +336,7 @@ export function OrderConfirmModal({
                   예상 금액
                 </span>
                 <span className="text-xl font-bold">
-                  {estimatedAmount.toLocaleString()}원
+                  {formatCurrencyPrice(estimatedAmount, currency)}
                 </span>
               </div>
               {isBuy && buyable && estimatedAmount > buyable.amount && (
@@ -389,6 +390,46 @@ export function OrderConfirmModal({
       </div>
     </div>
   );
+}
+
+function formatCurrencyPrice(value: number, currency?: string | null) {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  if (isForeignCurrency(currency)) {
+    return `${currencySymbol(currency)}${value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    })}`;
+  }
+  return Math.round(value).toLocaleString("ko-KR");
+}
+
+function formatSignedCurrencyPrice(value: number, currency?: string | null) {
+  if (!Number.isFinite(value) || value === 0) return "0";
+  if (isForeignCurrency(currency)) {
+    return `${value > 0 ? "+" : "-"}${currencySymbol(currency)}${Math.abs(value).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    })}`;
+  }
+  return `${value > 0 ? "+" : "-"}${Math.abs(Math.round(value)).toLocaleString("ko-KR")}`;
+}
+
+function currencyLabel(currency?: string | null) {
+  const normalized = String(currency || "").trim().toUpperCase();
+  return normalized && normalized !== "KRW" ? normalized : "원";
+}
+
+function isForeignCurrency(currency?: string | null) {
+  const normalized = String(currency || "").trim().toUpperCase();
+  return Boolean(normalized && normalized !== "KRW");
+}
+
+function currencySymbol(currency?: string | null) {
+  const normalized = String(currency || "").trim().toUpperCase();
+  if (normalized === "USD") return "$";
+  if (normalized === "JPY") return "JPY ";
+  if (normalized === "EUR") return "EUR ";
+  return normalized ? `${normalized} ` : "";
 }
 
 export default OrderConfirmModal;

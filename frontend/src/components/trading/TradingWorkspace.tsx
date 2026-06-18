@@ -98,6 +98,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   const liveData = useMemo<TradingWorkspaceData>(() => ({ ...data, stock: liveStock }), [data, liveStock]);
   const draftPrice = orderDraft.stockId === liveData.stock.id ? orderDraft.price : liveData.stock.price;
   const draftQuantity = orderDraft.stockId === liveData.stock.id ? orderDraft.quantity : "0";
+  const orderCurrency = livePrice?.currency ?? orderbookData?.currency ?? inferStockCurrency(data.stock);
 
   useEffect(() => {
     const syncWatchlist = () => {
@@ -111,7 +112,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   }, []);
 
   useEffect(() => {
-    if (!isKisRealtimeSupported(data.stock)) {
+    if (!isKbMarketDataSupported(data.stock)) {
       setLivePrice(null);
       setLiveStatus("idle");
       setLiveError(null);
@@ -122,12 +123,14 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     let socket: WebSocket | null = null;
     let pollTimer: number | null = null;
     const stockCode = data.stock.code;
+    const exchange = data.stock.exchange;
+    const realtimeSupported = isKisRealtimeSupported(data.stock);
 
     const fetchSnapshot = async () => {
       if (!isActive) return;
       setLiveStatus((status) => (status === "connected" ? status : "loading"));
       try {
-        const response = await getKbCurrentPrice(stockCode, "real");
+        const response = await getKbCurrentPrice(stockCode, "real", exchange);
         if (!isActive) return;
         const snapshot = response.data;
         if (response.status === "success" && snapshot) {
@@ -193,7 +196,9 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
 
     void fetchSnapshot();
     pollTimer = window.setInterval(() => void fetchSnapshot(), 30000);
-    connectRealtime();
+    if (realtimeSupported) {
+      connectRealtime();
+    }
 
     return () => {
       isActive = false;
@@ -212,7 +217,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   }, [data.stock]);
 
   useEffect(() => {
-    if (!isKisRealtimeSupported(data.stock)) {
+    if (!isKbMarketDataSupported(data.stock)) {
       setOrderbookData(null);
       setExecutionData(null);
       return;
@@ -221,11 +226,12 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     let isActive = true;
     let marketDataTimer: number | null = null;
     const stockCode = data.stock.code;
+    const exchange = data.stock.exchange;
 
     const fetchMarketDetails = async () => {
       const [orderbookResult, executionsResult] = await Promise.allSettled([
-        getOrderbook(stockCode, "real"),
-        getExecutions(stockCode, "real", 10),
+        getOrderbook(stockCode, "real", exchange),
+        getExecutions(stockCode, "real", 10, exchange),
       ]);
 
       if (!isActive) return;
@@ -367,6 +373,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
                 price={draftPrice}
                 quantity={draftQuantity}
                 ratio={ratio}
+                currency={orderCurrency}
                 onOrderTypeChange={setOrderType}
                 onPreview={previewOrder}
                 onPriceChange={handlePriceChange}
@@ -823,6 +830,7 @@ function OrderFormPanel({
   price,
   quantity,
   ratio,
+  currency,
   onOrderTypeChange,
   onPreview,
   onPriceChange,
@@ -837,6 +845,7 @@ function OrderFormPanel({
   price: string;
   quantity: string;
   ratio: string;
+  currency?: string | null;
   onOrderTypeChange: (value: string) => void;
   onPreview: () => void;
   onPriceChange: (value: string) => void;
@@ -864,6 +873,8 @@ function OrderFormPanel({
   const actionText = activeTab === "정정" ? "정정 요청" : activeTab === "취소" ? "취소 요청" : `${activeTab} 주문`;
   const isModify = activeTab === "정정";
   const isCancel = activeTab === "취소";
+  const priceUnit = currencyLabel(currency);
+  const priceStep = isForeignCurrency(currency) ? 0.01 : 100;
 
   return (
     <div id="trading-order-panel" className="rounded-lg border border-slate-200 bg-white">
@@ -931,12 +942,12 @@ function OrderFormPanel({
           </div>
         )}
 
-        {!isCancel && <StepperField label={isModify ? "정정가격" : "가격"} unit="원" value={price} onChange={onPriceChange} step={100} />}
+        {!isCancel && <StepperField label={isModify ? "정정가격" : "가격"} unit={priceUnit} value={price} onChange={onPriceChange} step={priceStep} />}
         <StepperField label={isCancel ? "취소수량" : isModify ? "정정수량" : "수량"} unit="주" value={quantity} onChange={onQuantityChange} step={1} />
 
         <div className="grid grid-cols-[86px_1fr] items-center gap-2">
           <span className="text-xs font-extrabold text-[#071832]">{isCancel ? "취소예정금액" : isModify ? "정정예정금액" : "주문금액"}</span>
-          <span className="text-right text-sm font-black tabular-nums text-[#071832]">{amount.toLocaleString("ko-KR")} 원</span>
+          <span className="text-right text-sm font-black tabular-nums text-[#071832]">{formatOrderAmount(amount, currency)}</span>
         </div>
 
         {!isCancel && <div className="grid grid-cols-5 gap-1.5">
@@ -1505,6 +1516,10 @@ function isKisRealtimeSupported(stock: TradingWorkspaceData["stock"]) {
   return stock.exchange === "KRX" && /^\d{6}$/.test(stock.code);
 }
 
+function isKbMarketDataSupported(stock: TradingWorkspaceData["stock"]) {
+  return isKisRealtimeSupported(stock) || /^[A-Z][A-Z0-9.-]{0,11}$/.test(stock.code);
+}
+
 function applyQuoteToWatchItem(item: WatchItem, quotes: Record<string, Parameters<typeof formatSharedQuoteDisplay>[0]>): WatchItem {
   const quote = formatSharedQuoteDisplay(getQuoteFromMap(quotes, item.symbol));
   return {
@@ -1531,6 +1546,8 @@ function mergePriceData(current: PriceData | null, next: Partial<PriceData>): Pr
     w52_low: numberOr(next.w52_low, current?.w52_low ?? 0),
     timestamp: next.timestamp ?? current?.timestamp ?? null,
     source: next.source ?? current?.source,
+    exchange: next.exchange ?? current?.exchange,
+    currency: next.currency ?? current?.currency,
   };
 }
 
@@ -1539,12 +1556,12 @@ function mergeLiveStock(stock: TradingWorkspaceData["stock"], livePrice: PriceDa
   const tone = toneFromNumber(livePrice.change_rate || livePrice.change);
   return {
     ...stock,
-    price: formatLivePrice(livePrice.price),
-    change: formatSignedPrice(livePrice.change),
+    price: formatLivePrice(livePrice.price, livePrice.currency),
+    change: formatSignedPrice(livePrice.change, livePrice.currency),
     changeRate: formatSignedPercent(livePrice.change_rate),
     tone,
     volume: livePrice.volume > 0 ? livePrice.volume.toLocaleString("ko-KR") : stock.volume,
-    tradingValue: livePrice.trading_value && livePrice.trading_value > 0 ? formatTradingValue(livePrice.trading_value) : stock.tradingValue,
+    tradingValue: livePrice.trading_value && livePrice.trading_value > 0 ? formatTradingValue(livePrice.trading_value, livePrice.currency) : stock.tradingValue,
     source: livePrice.source?.startsWith("kb") ? "kb" : "kis",
   };
 }
@@ -1570,7 +1587,13 @@ function numberOr(value: number | null | undefined, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function formatLivePrice(value: number) {
+function formatLivePrice(value: number, currency?: string | null) {
+  if (isForeignCurrency(currency)) {
+    return `${currencySymbol(currency)}${value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    })}`;
+  }
   return Math.round(value).toLocaleString("ko-KR");
 }
 
@@ -1578,8 +1601,14 @@ function formatOptionalPrice(value: number | null | undefined, fallback: string)
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? formatLivePrice(value) : fallback;
 }
 
-function formatSignedPrice(value: number) {
+function formatSignedPrice(value: number, currency?: string | null) {
   if (!Number.isFinite(value) || value === 0) return "0";
+  if (isForeignCurrency(currency)) {
+    return `${value > 0 ? "+" : "-"}${currencySymbol(currency)}${Math.abs(value).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    })}`;
+  }
   return `${value > 0 ? "+" : "-"}${Math.abs(Math.round(value)).toLocaleString("ko-KR")}`;
 }
 
@@ -1588,15 +1617,49 @@ function formatSignedPercent(value: number) {
   return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
-function formatTradingValue(value: number) {
+function formatTradingValue(value: number, currency?: string | null) {
   if (!Number.isFinite(value) || value <= 0) return "-";
-  if (value >= 1_000_000_000_000) return `${trimFixed(value / 1_000_000_000_000, 1)}조`;
-  if (value >= 100_000_000) return `${Math.round(value / 100_000_000).toLocaleString("ko-KR")}억`;
+  if (isForeignCurrency(currency)) {
+    if (value >= 1_000_000_000) return `${currencySymbol(currency)}${trimFixed(value / 1_000_000_000, 1)}B`;
+    if (value >= 1_000_000) return `${currencySymbol(currency)}${trimFixed(value / 1_000_000, 1)}M`;
+    return `${currencySymbol(currency)}${Math.round(value).toLocaleString("en-US")}`;
+  }
+  if (value >= 1_000_000_000_000) return `${trimFixed(value / 1_000_000_000_000, 1)}T`;
+  if (value >= 100_000_000) return `${Math.round(value / 100_000_000).toLocaleString("ko-KR")}B`;
   return Math.round(value).toLocaleString("ko-KR");
+}
+
+function formatOrderAmount(value: number, currency?: string | null) {
+  if (!Number.isFinite(value) || value <= 0) return isForeignCurrency(currency) ? `${currencySymbol(currency)}0.00` : "0 원";
+  if (isForeignCurrency(currency)) {
+    return `${currencySymbol(currency)}${value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    })}`;
+  }
+  return `${Math.round(value).toLocaleString("ko-KR")} 원`;
 }
 
 function trimFixed(value: number, digits: number) {
   return value.toFixed(digits).replace(/\.0$/, "");
+}
+
+function isForeignCurrency(currency?: string | null) {
+  const normalized = String(currency || "").trim().toUpperCase();
+  return Boolean(normalized && normalized !== "KRW");
+}
+
+function currencyLabel(currency?: string | null) {
+  const normalized = String(currency || "").trim().toUpperCase();
+  return normalized && normalized !== "KRW" ? normalized : "원";
+}
+
+function currencySymbol(currency?: string | null) {
+  const normalized = String(currency || "").trim().toUpperCase();
+  if (normalized === "USD") return "$";
+  if (normalized === "JPY") return "JPY ";
+  if (normalized === "EUR") return "EUR ";
+  return normalized ? `${normalized} ` : "";
 }
 
 function toneFromNumber(value: number): PriceTone {
@@ -1639,8 +1702,13 @@ function getLiveQuoteState(status: LiveQuoteStatus, error: string | null) {
 }
 
 function toNumber(value: string) {
-  const parsed = Number(value.replace(/[^\d]/g, ""));
+  const parsed = Number(value.replace(/,/g, "").replace(/[^\d.+-]/g, ""));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function inferStockCurrency(stock: TradingWorkspaceData["stock"]) {
+  const exchange = String(stock.exchange || "").trim().toUpperCase();
+  return exchange.includes("KRX") || exchange.includes("KOS") || exchange.includes("NXT") ? "KRW" : "USD";
 }
 
 function normalizeOrderQuantity(quantity?: string | null) {

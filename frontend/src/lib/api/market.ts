@@ -18,6 +18,8 @@ export interface OrderbookData {
   expected_volume: number;
   timestamp?: string | null;
   source?: string;
+  exchange?: string;
+  currency?: string;
 }
 
 export interface OrderbookResponse {
@@ -41,6 +43,8 @@ export interface ExecutionsData {
   executions: ExecutionData[];
   timestamp?: string | null;
   source?: string;
+  exchange?: string;
+  currency?: string;
 }
 
 export interface ExecutionsResponse {
@@ -64,6 +68,8 @@ export interface PriceData {
   w52_low: number;
   timestamp?: string | null;
   source?: string;
+  exchange?: string;
+  currency?: string;
 }
 
 export interface PriceResponse {
@@ -74,24 +80,42 @@ export interface PriceResponse {
 
 export async function getOrderbook(
   stockCode: string,
-  envDv: string = "real"
+  envDv: string = "real",
+  exchange?: string | null
 ): Promise<OrderbookResponse> {
-  return apiGet<OrderbookResponse>(`/api/market/orderbook/${stockCode}?env_dv=${envDv}`);
+  return apiGet<OrderbookResponse>(`/api/market/orderbook/${stockCode}?${buildMarketQuery({ envDv, exchange })}`);
 }
 
 export async function getKbCurrentPrice(
   stockCode: string,
-  envDv: string = "real"
+  envDv: string = "real",
+  exchange?: string | null
 ): Promise<PriceResponse> {
-  return apiGet<PriceResponse>(`/api/market/price/${stockCode}?env_dv=${envDv}`);
+  return apiGet<PriceResponse>(`/api/market/price/${stockCode}?${buildMarketQuery({ envDv, exchange })}`);
 }
 
 export async function getExecutions(
   stockCode: string,
   envDv: string = "real",
-  count: number = 10
+  count: number = 10,
+  exchange?: string | null
 ): Promise<ExecutionsResponse> {
-  return apiGet<ExecutionsResponse>(`/api/market/executions/${stockCode}?env_dv=${envDv}&count=${count}`);
+  return apiGet<ExecutionsResponse>(`/api/market/executions/${stockCode}?${buildMarketQuery({ envDv, exchange, count })}`);
 }
 
 export const getCurrentPrice = getKbCurrentPrice;
+
+function buildMarketQuery({
+  envDv,
+  exchange,
+  count,
+}: {
+  envDv: string;
+  exchange?: string | null;
+  count?: number;
+}) {
+  const params = new URLSearchParams({ env_dv: envDv });
+  if (exchange) params.set("exchange", exchange);
+  if (typeof count === "number") params.set("count", String(count));
+  return params.toString();
+}

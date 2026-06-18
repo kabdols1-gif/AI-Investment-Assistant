@@ -41,37 +41,40 @@ class OrderbookWebSocketManager:
         self.subscriptions.clear()
         logging.info("Orderbook WebSocket manager stopped")
 
-    async def subscribe_orderbook(self, stock_code: str, client_ws: Any) -> None:
-        if stock_code not in self.subscriptions:
-            self.subscriptions[stock_code] = set()
-            self.polling_tasks[stock_code] = asyncio.create_task(self._polling_loop(stock_code))
-            logging.info("Orderbook polling started: %s", stock_code)
+    async def subscribe_orderbook(self, stock_code: str, client_ws: Any, exchange: str | None = None) -> None:
+        subscription_key = _subscription_key(stock_code, exchange)
+        if subscription_key not in self.subscriptions:
+            self.subscriptions[subscription_key] = set()
+            self.polling_tasks[subscription_key] = asyncio.create_task(self._polling_loop(subscription_key, stock_code, exchange))
+            logging.info("Orderbook polling started: %s", subscription_key)
 
-        self.subscriptions[stock_code].add(client_ws)
-        logging.info("Orderbook client added: %s (%d)", stock_code, len(self.subscriptions[stock_code]))
+        self.subscriptions[subscription_key].add(client_ws)
+        logging.info("Orderbook client added: %s (%d)", subscription_key, len(self.subscriptions[subscription_key]))
 
-    async def unsubscribe_orderbook(self, stock_code: str, client_ws: Any) -> None:
-        if stock_code not in self.subscriptions:
+    async def unsubscribe_orderbook(self, stock_code: str, client_ws: Any, exchange: str | None = None) -> None:
+        subscription_key = _subscription_key(stock_code, exchange)
+        if subscription_key not in self.subscriptions:
             return
 
-        self.subscriptions[stock_code].discard(client_ws)
-        logging.info("Orderbook client removed: %s (%d)", stock_code, len(self.subscriptions[stock_code]))
+        self.subscriptions[subscription_key].discard(client_ws)
+        logging.info("Orderbook client removed: %s (%d)", subscription_key, len(self.subscriptions[subscription_key]))
 
-        if not self.subscriptions[stock_code]:
-            task = self.polling_tasks.pop(stock_code, None)
+        if not self.subscriptions[subscription_key]:
+            task = self.polling_tasks.pop(subscription_key, None)
             if task:
                 task.cancel()
-            del self.subscriptions[stock_code]
-            logging.info("Orderbook polling stopped: %s", stock_code)
+            del self.subscriptions[subscription_key]
+            logging.info("Orderbook polling stopped: %s", subscription_key)
 
-    async def _polling_loop(self, stock_code: str) -> None:
-        while self.running and stock_code in self.subscriptions:
+    async def _polling_loop(self, subscription_key: str, stock_code: str, exchange: str | None = None) -> None:
+        while self.running and subscription_key in self.subscriptions:
             try:
-                orderbook = await get_kb_orderbook(stock_code, env_dv="real")
+                orderbook = await get_kb_orderbook(stock_code, env_dv="real", exchange=exchange)
                 if orderbook:
                     payload = {
                         "type": "orderbook",
                         "stock_code": stock_code,
+                        "exchange": exchange,
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "data": {
                             "current_price": orderbook.get("current_price"),
@@ -84,16 +87,18 @@ class OrderbookWebSocketManager:
                             "expected_price": orderbook.get("expected_price", 0),
                             "expected_volume": orderbook.get("expected_volume", 0),
                             "source": orderbook.get("source", "kb_b2c"),
+                            "exchange": orderbook.get("exchange"),
+                            "currency": orderbook.get("currency"),
                         },
                     }
 
-                    clients = list(self.subscriptions.get(stock_code, []))
+                    clients = list(self.subscriptions.get(subscription_key, []))
                     for client_ws in clients:
                         try:
                             await client_ws.send_json(payload)
                         except Exception as exc:
                             logging.error("Orderbook client send failed: %s", exc)
-                            await self.unsubscribe_orderbook(stock_code, client_ws)
+                            await self.unsubscribe_orderbook(stock_code, client_ws, exchange)
 
                 await asyncio.sleep(ORDERBOOK_POLL_INTERVAL_SECONDS)
             except asyncio.CancelledError:
@@ -116,3 +121,8 @@ def get_ws_manager() -> OrderbookWebSocketManager:
         _ws_manager = OrderbookWebSocketManager()
 
     return _ws_manager
+
+
+def _subscription_key(stock_code: str, exchange: str | None = None) -> str:
+    normalized_exchange = str(exchange or "").strip().upper()
+    return f"{normalized_exchange}:{stock_code}" if normalized_exchange else stock_code

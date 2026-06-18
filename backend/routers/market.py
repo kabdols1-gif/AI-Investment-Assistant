@@ -29,11 +29,12 @@ router = APIRouter()
 async def get_orderbook(
     stock_code: str,
     env_dv: str = Query("real", description="Environment (real/demo/prod/vps)"),
+    exchange: str | None = Query(None, description="Exchange code/name (KRX, NASDAQ, NYSE, AMEX)"),
 ):
     """Fetch KB B2C orderbook data."""
 
     try:
-        orderbook = await get_kb_orderbook(stock_code, env_dv)
+        orderbook = await get_kb_orderbook(stock_code, env_dv, exchange)
         if not orderbook:
             return {
                 "status": "error",
@@ -61,11 +62,12 @@ async def get_orderbook(
 async def get_current_price(
     stock_code: str,
     env_dv: str = Query("real", description="Environment (real/demo/prod/vps)"),
+    exchange: str | None = Query(None, description="Exchange code/name (KRX, NASDAQ, NYSE, AMEX)"),
 ):
     """Fetch KB B2C current price data."""
 
     try:
-        price_data = await get_kb_current_price(stock_code, env_dv)
+        price_data = await get_kb_current_price(stock_code, env_dv, exchange)
         if not price_data:
             return {
                 "status": "error",
@@ -94,11 +96,12 @@ async def get_executions(
     stock_code: str,
     env_dv: str = Query("real", description="Environment (real/demo/prod/vps)"),
     count: int = Query(10, ge=1, le=50, description="Execution record count"),
+    exchange: str | None = Query(None, description="Exchange code/name (KRX, NASDAQ, NYSE, AMEX)"),
 ):
     """Fetch KB B2C time-and-sales execution data."""
 
     try:
-        executions = await get_kb_executions(stock_code, env_dv, count)
+        executions = await get_kb_executions(stock_code, env_dv, count, exchange)
         if not executions:
             return {
                 "status": "error",
@@ -237,7 +240,7 @@ async def websocket_prices(websocket: WebSocket, codes: str = "", env_dv: str = 
 
 
 @router.websocket("/ws/{stock_code}")
-async def websocket_orderbook(websocket: WebSocket, stock_code: str):
+async def websocket_orderbook(websocket: WebSocket, stock_code: str, exchange: str | None = None):
     """Poll KB B2C orderbook data and push it over a WebSocket."""
 
     await websocket.accept()
@@ -253,7 +256,7 @@ async def websocket_orderbook(websocket: WebSocket, stock_code: str):
             return
 
     try:
-        await ws_manager.subscribe_orderbook(stock_code, websocket)
+        await ws_manager.subscribe_orderbook(stock_code, websocket, exchange)
     except Exception as exc:
         logging.error("Orderbook subscription failed: %s", exc)
         await websocket.close(code=1011, reason="Subscription failed")
@@ -268,5 +271,5 @@ async def websocket_orderbook(websocket: WebSocket, stock_code: str):
     except Exception as exc:
         logging.error("Orderbook WebSocket failed: %s", exc)
     finally:
-        await ws_manager.unsubscribe_orderbook(stock_code, websocket)
+        await ws_manager.unsubscribe_orderbook(stock_code, websocket, exchange)
         logging.info("Orderbook WebSocket closed: %s", stock_code)

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getWsBase } from "@/lib/api/client";
 import { getKbCurrentPrice, type PriceData } from "@/lib/api/market";
-import { isKrxQuoteCode, normalizeQuoteCode } from "@/lib/marketQuoteDisplay";
+import { isKbQuoteCode, isKrxQuoteCode, normalizeQuoteCode } from "@/lib/marketQuoteDisplay";
 
 type QuoteMap = Record<string, PriceData | null>;
 
@@ -21,9 +21,10 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
   const { enabled = true, envDv = "real", realtime = true, refreshIntervalMs = 30000 } = options;
   const codeKey = codes.map(normalizeQuoteCode).filter(Boolean).sort().join("|");
   const quoteCodes = useMemo(
-    () => (codeKey ? Array.from(new Set(codeKey.split("|").filter(isKrxQuoteCode))) : []),
+    () => (codeKey ? Array.from(new Set(codeKey.split("|").filter(isKbQuoteCode))) : []),
     [codeKey]
   );
+  const realtimeCodes = useMemo(() => quoteCodes.filter(isKrxQuoteCode), [quoteCodes]);
   const [quoteResults, setQuoteResults] = useState<QuoteMap>({});
   const [refreshTick, setRefreshTick] = useState(0);
   const quotes = useMemo(() => buildQuoteMap(quoteCodes, quoteResults), [quoteCodes, quoteResults]);
@@ -68,7 +69,7 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
   }, [enabled, envDv, quoteCodes, refreshTick]);
 
   useEffect(() => {
-    if (!enabled || !realtime || quoteCodes.length === 0 || typeof window === "undefined") {
+    if (!enabled || !realtime || realtimeCodes.length === 0 || typeof window === "undefined") {
       return;
     }
 
@@ -76,7 +77,7 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
     let reconnectAttempts = 0;
-    const codesParam = quoteCodes.map(encodeURIComponent).join(",");
+    const codesParam = realtimeCodes.map(encodeURIComponent).join(",");
 
     const connect = () => {
       if (!active) return;
@@ -142,7 +143,7 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
         socket.close();
       }
     };
-  }, [enabled, envDv, quoteCodes, realtime]);
+  }, [enabled, envDv, realtimeCodes, realtime]);
 
   const getQuote = useCallback((code: string | null | undefined) => quotes[normalizeQuoteCode(code)] ?? null, [quotes]);
 
