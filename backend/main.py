@@ -13,7 +13,7 @@ sys.path.insert(0, project_root)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import account, actions, auth, broker, config, files, market, openapi, orders, strategy, symbols, voice
+from backend.routers import account, actions, auth, broker, config, files, logs, market, openapi, orders, strategy, symbols, voice
 from backend.services.symbol_scheduler import start_symbol_scheduler, stop_symbol_scheduler
 
 
@@ -56,6 +56,7 @@ app.include_router(config.router, prefix="/api/config", tags=["config"])
 app.include_router(actions.router, prefix="/api/actions", tags=["actions"])
 app.include_router(broker.router, prefix="/api/brokers", tags=["brokers"])
 app.include_router(openapi.router, prefix="/api/openapi", tags=["openapi"])
+app.include_router(logs.router, prefix="/api/logs", tags=["logs"])
 
 
 @app.get("/api/health")

@@ -10,6 +10,7 @@ export type ScreenKey =
   | "watchlist"
   | "portfolio"
   | "notifications"
+  | "logs"
   | "settings"
   | "my-settings";
 
@@ -91,6 +92,14 @@ export const screenMeta: Record<ScreenKey, ScreenMeta> = {
     subtitle: "체결, 시세, 전략, 리스크 변화를 빠르게 확인",
     placeholder: "음성으로 말하거나 직접 입력하세요. 예: 오늘 알림 알려줘",
   },
+  logs: {
+    key: "logs",
+    href: "/logs",
+    label: "로그정보",
+    title: "로그정보",
+    subtitle: "OpenAPI 서버 호출 이력과 응답 상태",
+    placeholder: "OpenAPI 호출 이력을 확인해줘",
+  },
   settings: {
     key: "settings",
     href: "/settings",
@@ -117,6 +126,7 @@ export const navScreens: NavScreenKey[] = [
   "market",
   "assets",
   "notifications",
+  "logs",
   "settings",
 ];
 

@@ -21,6 +21,7 @@ class VoiceCommand(BaseModel):
         "watchlist",
         "portfolio",
         "notifications",
+        "logs",
         "settings",
         "voice",
     ] | None = None

@@ -37,6 +37,7 @@ export interface VoiceCommand {
     | "watchlist"
     | "portfolio"
     | "notifications"
+    | "logs"
     | "settings"
     | "my-settings";
 }
