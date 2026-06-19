@@ -1,1 +1,1 @@
-export const SCREEN_REVISION = "UI v2026.06.19.3";
+export const SCREEN_REVISION = "UI v2026.06.19.4";

@@ -66,10 +66,8 @@ const bottomTabs: BottomTab[] = ["차트", "예수금", "주문내역", "매매�
 const orderTypes = ["보통", "시장가", "조건부", "최유리"];
 const ratios = ["10%", "25%", "50%", "100%", "직접"];
 const chartPeriods = ["1분", "5분", "15분", "30분", "일", "주", "월"];
-const dualExchangeStockIds = new Set(["005930", "000660", "035720", "035420", "373220", "005380", "066570"]);
 const ORDERBOOK_DISPLAY_DEPTH = 5;
 const DEFAULT_DOMESTIC_EXCHANGE = "KRX";
-const FALLBACK_DOMESTIC_EXCHANGE = "NXT";
 const ORDERBOOK_MAX_DEVIATION_RATE = 0.15;
 const REALTIME_MAX_DEVIATION_RATE = 0.15;
 const tradingPriceCache = new Map<string, PriceData>();
@@ -163,7 +161,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
       if (!isActive) return;
       setLiveStatus((status) => (status === "connected" ? status : "loading"));
       try {
-        const response = await getKbCurrentPriceWithDomesticFallback(stockCode, "real", data.stock, exchange);
+        const response = await getKbCurrentPrice(stockCode, "real", exchange);
         if (!isActive) return;
         const snapshot = response.data;
         if (response.status === "success" && snapshot) {
@@ -318,13 +316,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     };
 
     const fetchOrderbook = async () => {
-      let response = await getOrderbook(stockCode, "real", exchange);
-      if (shouldUseDomesticOrderbookFallback(response.data, data.stock, exchange)) {
-        const fallbackResponse = await getOrderbook(stockCode, "real", FALLBACK_DOMESTIC_EXCHANGE);
-        if (fallbackResponse.status === "success" && hasOrderbookLevels(fallbackResponse.data)) {
-          response = fallbackResponse;
-        }
-      }
+      const response = await getOrderbook(stockCode, "real", exchange);
       if (!isActive) return;
       if (response.status === "success" && response.data) {
         applyOrderbook(response.data);
@@ -413,10 +405,11 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
 
   useEffect(() => {
     setOrderDraft((current) => {
+      const livePriceNumber = toNumber(liveData.stock.price);
       if (current.stockId !== data.stock.id) {
-        return { ...current, stockId: data.stock.id, price: liveData.stock.price };
+        return { ...current, stockId: data.stock.id, price: livePriceNumber > 0 ? liveData.stock.price : "0" };
       }
-      if (current.quantity !== "0" && current.price !== "0") return current;
+      if (livePriceNumber <= 0 || toNumber(current.price) > 0) return current;
       return { ...current, price: liveData.stock.price };
     });
   }, [data.stock.id, liveData.stock.price]);
@@ -2304,40 +2297,8 @@ function isKbMarketDataSupported(stock: TradingWorkspaceData["stock"]) {
   return isKisRealtimeSupported(stock) || /^[A-Z][A-Z0-9.-]{0,11}$/.test(stock.code);
 }
 
-async function getKbCurrentPriceWithDomesticFallback(
-  stockCode: string,
-  envDv: string,
-  stock: TradingWorkspaceData["stock"],
-  exchange?: string | null
-) {
-  const primaryResponse = await getKbCurrentPrice(stockCode, envDv, exchange);
-  if (!shouldUseDomesticPriceFallback(primaryResponse.data, stock, exchange)) {
-    return primaryResponse;
-  }
-
-  const fallbackResponse = await getKbCurrentPrice(stockCode, envDv, FALLBACK_DOMESTIC_EXCHANGE);
-  if (fallbackResponse.status === "success" && hasLivePriceData(fallbackResponse.data)) {
-    return fallbackResponse;
-  }
-
-  return primaryResponse;
-}
-
-function shouldUseDomesticPriceFallback(price: PriceData | null | undefined, stock: TradingWorkspaceData["stock"], exchange?: string | null) {
-  return isDomesticMarketStock(stock) && normalizeExchangeCode(exchange) === DEFAULT_DOMESTIC_EXCHANGE && !hasLivePriceData(price);
-}
-
-function shouldUseDomesticOrderbookFallback(orderbook: OrderbookData | null | undefined, stock: TradingWorkspaceData["stock"], exchange?: string | null) {
-  return isDomesticMarketStock(stock) && normalizeExchangeCode(exchange) === DEFAULT_DOMESTIC_EXCHANGE && !hasOrderbookLevels(orderbook);
-}
-
 function hasLivePriceData(price: PriceData | null | undefined) {
   return Boolean(price && Number.isFinite(price.price) && price.price > 0);
-}
-
-function hasOrderbookLevels(orderbook: OrderbookData | null | undefined) {
-  if (!orderbook) return false;
-  return collectOrderbookLevels(orderbook.ask_prices, orderbook.ask_volumes).length > 0 || collectOrderbookLevels(orderbook.bid_prices, orderbook.bid_volumes).length > 0;
 }
 
 function normalizeOrderbookCurrentPrice(nextPrice: number | null | undefined, cachedPrice: number | null | undefined, referencePrice: number) {
@@ -2476,16 +2437,7 @@ function toPendingMarketDataStock(stock: TradingWorkspaceData["stock"]): Trading
 }
 
 function isDomesticMarketStock(stock: TradingWorkspaceData["stock"]) {
-  return /^\d{6}$/.test(stock.code) && isDomesticExchangeLabel(stock.exchange);
-}
-
-function isDomesticExchangeLabel(exchange: string | null | undefined) {
-  const normalized = normalizeExchangeCode(exchange);
-  return !normalized || normalized === "KR" || normalized === "KOR" || normalized.includes("KRX") || normalized.includes("KOS") || normalized.includes("NXT");
-}
-
-function normalizeExchangeCode(exchange: string | null | undefined) {
-  return String(exchange || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+  return /^\d{6}$/.test(stock.code);
 }
 
 function applyQuoteToWatchItem(item: WatchItem, quotes: Record<string, Parameters<typeof formatSharedQuoteDisplay>[0]>): WatchItem {
@@ -2811,8 +2763,9 @@ function toNumber(value: string) {
 }
 
 function inferStockCurrency(stock: TradingWorkspaceData["stock"]) {
+  if (/^\d{6}$/.test(stock.code)) return "KRW";
   const exchange = String(stock.exchange || "").trim().toUpperCase();
-  return exchange.includes("KRX") || exchange.includes("KOS") || exchange.includes("NXT") ? "KRW" : "USD";
+  return exchange.includes("KRX") || exchange.includes("KOS") ? "KRW" : "USD";
 }
 
 function normalizeOrderQuantity(quantity?: string | null) {
@@ -2840,10 +2793,6 @@ function getWatchItemIconUrl(item: WatchItem) {
 }
 
 function getExchangeDisplayLabel(stock: TradingWorkspaceData["stock"]) {
-  if (stock.exchange === "KRX" && dualExchangeStockIds.has(stock.id)) {
-    return "KRX/NXT";
-  }
-
   return stock.exchange;
 }
 

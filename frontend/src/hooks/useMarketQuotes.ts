@@ -18,7 +18,6 @@ type UseMarketQuotesOptions = {
 const quoteCache = new Map<string, PriceData>();
 const quoteRequests = new Map<string, Promise<PriceData | null>>();
 const DEFAULT_DOMESTIC_EXCHANGE = "KRX";
-const FALLBACK_DOMESTIC_EXCHANGE = "NXT";
 const REALTIME_MAX_DEVIATION_RATE = 0.15;
 
 export function useMarketQuotes(codes: Array<string | null | undefined>, options: UseMarketQuotesOptions = {}) {
@@ -54,9 +53,10 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
     const forceRefresh = refreshTick > 0;
 
     quoteCodes.forEach((code) => {
-      if (!forceRefresh && quoteCache.has(code)) return;
+      const exchange = quoteExchange(code, domesticExchange);
+      if (!forceRefresh && getCachedQuote(code, exchange)) return;
 
-      void requestQuote(code, envDv, forceRefresh, quoteExchange(code, domesticExchange))
+      void requestQuote(code, envDv, forceRefresh, exchange)
         .then((quote) => {
           if (cancelled) return;
           setQuoteResults((current) => ({ ...current, [code]: quote }));
@@ -179,7 +179,7 @@ async function requestQuote(code: string, envDv: string, forceRefresh = false, e
   const existingRequest = quoteRequests.get(requestKey);
   if (existingRequest) return existingRequest;
 
-  const request = fetchQuoteWithDomesticFallback(code, envDv, normalizedExchange)
+  const request = fetchQuote(code, envDv, normalizedExchange)
     .then((quote) => {
       const scopedQuote = quote ? normalizeIncomingQuote(code, quote) : null;
       if (scopedQuote && hasLivePrice(scopedQuote)) {
@@ -194,18 +194,6 @@ async function requestQuote(code: string, envDv: string, forceRefresh = false, e
 
   quoteRequests.set(requestKey, request);
   return request;
-}
-
-async function fetchQuoteWithDomesticFallback(code: string, envDv: string, exchange?: string | null) {
-  const primaryQuote = await fetchQuote(code, envDv, exchange);
-  if (primaryQuote && hasLivePrice(primaryQuote)) return primaryQuote;
-
-  if (isKrxQuoteCode(code) && normalizeMarketExchange(exchange) === DEFAULT_DOMESTIC_EXCHANGE) {
-    const fallbackQuote = await fetchQuote(code, envDv, FALLBACK_DOMESTIC_EXCHANGE);
-    if (fallbackQuote && hasLivePrice(fallbackQuote)) return fallbackQuote;
-  }
-
-  return primaryQuote;
 }
 
 async function fetchQuote(code: string, envDv: string, exchange?: string | null) {
