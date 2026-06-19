@@ -17,9 +17,12 @@ type UseMarketQuotesOptions = {
 
 const quoteCache = new Map<string, PriceData>();
 const quoteRequests = new Map<string, Promise<PriceData | null>>();
+const DEFAULT_DOMESTIC_EXCHANGE = "KRX";
+const FALLBACK_DOMESTIC_EXCHANGE = "NXT";
+const REALTIME_MAX_DEVIATION_RATE = 0.15;
 
 export function useMarketQuotes(codes: Array<string | null | undefined>, options: UseMarketQuotesOptions = {}) {
-  const { domesticExchange = "NXT", enabled = true, envDv = "real", realtime = true, refreshIntervalMs = 30000 } = options;
+  const { domesticExchange = DEFAULT_DOMESTIC_EXCHANGE, enabled = true, envDv = "real", realtime = true, refreshIntervalMs = 30000 } = options;
   const codeKey = codes.map(normalizeQuoteCode).filter(Boolean).sort().join("|");
   const quoteCodes = useMemo(
     () => (codeKey ? Array.from(new Set(codeKey.split("|").filter(isKbQuoteCode))) : []),
@@ -28,7 +31,7 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
   const realtimeCodes = useMemo(() => quoteCodes.filter(isKrxQuoteCode), [quoteCodes]);
   const [quoteResults, setQuoteResults] = useState<QuoteMap>({});
   const [refreshTick, setRefreshTick] = useState(0);
-  const quotes = useMemo(() => buildQuoteMap(quoteCodes, quoteResults), [quoteCodes, quoteResults]);
+  const quotes = useMemo(() => buildQuoteMap(quoteCodes, quoteResults, domesticExchange), [domesticExchange, quoteCodes, quoteResults]);
 
   useEffect(() => {
     if (!enabled || refreshIntervalMs <= 0 || quoteCodes.length === 0) {
@@ -111,13 +114,14 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
           const code = normalizeQuoteCode(payload.stock_code ?? payload.data?.stock_code);
           if (payload.type !== "price" || !isKrxQuoteCode(code) || !payload.data) return;
 
-          const current = getCachedQuote(code);
+          const current = getCachedQuote(code, exchangeParam);
           const quote = mergeRealtimeQuote(code, current, {
             ...payload.data,
             source: payload.source === "kis_realtime" ? "kis_realtime" : payload.data.source,
           });
           if (!hasLivePrice(quote)) return;
-          quoteCache.set(code, quote);
+          if (shouldIgnoreRealtimeQuote(quote, current)) return;
+          quoteCache.set(getQuoteCacheKey(code, quote.exchange ?? exchangeParam), quote);
           setQuoteResults((currentResults) => ({ ...currentResults, [code]: quote }));
         } catch {
           // Ignore malformed realtime frames.
@@ -158,27 +162,28 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
   };
 }
 
-function buildQuoteMap(codes: string[], quoteResults: QuoteMap) {
+function buildQuoteMap(codes: string[], quoteResults: QuoteMap, domesticExchange?: string | null) {
   return codes.reduce<QuoteMap>((map, code) => {
-    map[code] = getCachedQuote(code) ?? quoteResults[code] ?? null;
+    const exchange = quoteExchange(code, domesticExchange);
+    map[code] = getCachedQuote(code, exchange) ?? quoteResults[code] ?? null;
     return map;
   }, {});
 }
 
 async function requestQuote(code: string, envDv: string, forceRefresh = false, exchange?: string | null) {
-  const cached = getCachedQuote(code);
+  const normalizedExchange = normalizeMarketExchange(exchange);
+  const cached = getCachedQuote(code, normalizedExchange);
   if (cached && !forceRefresh && hasLivePrice(cached)) return cached;
 
-  const requestKey = `${envDv}:${exchange || "-"}:${code}`;
+  const requestKey = `${envDv}:${normalizedExchange || "-"}:${code}`;
   const existingRequest = quoteRequests.get(requestKey);
   if (existingRequest) return existingRequest;
 
-  const request = getKbCurrentPrice(code, envDv, exchange)
-    .then((response) => {
-      const quote = response.status === "success" ? response.data ?? null : null;
+  const request = fetchQuoteWithDomesticFallback(code, envDv, normalizedExchange)
+    .then((quote) => {
       const scopedQuote = quote ? normalizeIncomingQuote(code, quote) : null;
       if (scopedQuote && hasLivePrice(scopedQuote)) {
-        quoteCache.set(code, scopedQuote);
+        quoteCache.set(getQuoteCacheKey(code, scopedQuote.exchange ?? normalizedExchange), scopedQuote);
       }
       return scopedQuote;
     })
@@ -189,6 +194,27 @@ async function requestQuote(code: string, envDv: string, forceRefresh = false, e
 
   quoteRequests.set(requestKey, request);
   return request;
+}
+
+async function fetchQuoteWithDomesticFallback(code: string, envDv: string, exchange?: string | null) {
+  const primaryQuote = await fetchQuote(code, envDv, exchange);
+  if (primaryQuote && hasLivePrice(primaryQuote)) return primaryQuote;
+
+  if (isKrxQuoteCode(code) && normalizeMarketExchange(exchange) === DEFAULT_DOMESTIC_EXCHANGE) {
+    const fallbackQuote = await fetchQuote(code, envDv, FALLBACK_DOMESTIC_EXCHANGE);
+    if (fallbackQuote && hasLivePrice(fallbackQuote)) return fallbackQuote;
+  }
+
+  return primaryQuote;
+}
+
+async function fetchQuote(code: string, envDv: string, exchange?: string | null) {
+  try {
+    const response = await getKbCurrentPrice(code, envDv, exchange);
+    return response.status === "success" ? response.data ?? null : null;
+  } catch {
+    return null;
+  }
 }
 
 function mergeRealtimeQuote(code: string, current: PriceData | null, next: Partial<PriceData>): PriceData {
@@ -212,9 +238,9 @@ function mergeRealtimeQuote(code: string, current: PriceData | null, next: Parti
   };
 }
 
-function getCachedQuote(code: string) {
+function getCachedQuote(code: string, exchange?: string | null) {
   const normalizedCode = normalizeQuoteCode(code);
-  const cached = quoteCache.get(normalizedCode);
+  const cached = quoteCache.get(getQuoteCacheKey(normalizedCode, exchange));
   if (!cached) return null;
   return normalizeQuoteCode(cached.stock_code) === normalizedCode ? cached : null;
 }
@@ -237,6 +263,28 @@ function hasLivePrice(quote: PriceData) {
   return Number.isFinite(quote.price) && quote.price > 0;
 }
 
+function shouldIgnoreRealtimeQuote(next: PriceData, current: PriceData | null) {
+  if (!current || !hasLivePrice(current) || !hasLivePrice(next)) return false;
+  if (!isRealtimeSource(next.source) || !isKbSource(current.source)) return false;
+  return Math.abs(next.price - current.price) / current.price > REALTIME_MAX_DEVIATION_RATE;
+}
+
+function isRealtimeSource(source?: string | null) {
+  return String(source || "").toLowerCase().includes("kis");
+}
+
+function isKbSource(source?: string | null) {
+  return String(source || "").toLowerCase().startsWith("kb");
+}
+
 function quoteExchange(code: string, domesticExchange?: string | null) {
-  return isKrxQuoteCode(code) ? domesticExchange || "NXT" : undefined;
+  return isKrxQuoteCode(code) ? domesticExchange || DEFAULT_DOMESTIC_EXCHANGE : undefined;
+}
+
+function getQuoteCacheKey(code: string, exchange?: string | null) {
+  return `${normalizeMarketExchange(exchange) || "-"}:${normalizeQuoteCode(code)}`;
+}
+
+function normalizeMarketExchange(exchange?: string | null) {
+  return exchange ? exchange.trim().toUpperCase() : undefined;
 }

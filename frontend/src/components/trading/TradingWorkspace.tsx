@@ -68,6 +68,10 @@ const ratios = ["10%", "25%", "50%", "100%", "직접"];
 const chartPeriods = ["1분", "5분", "15분", "30분", "일", "주", "월"];
 const dualExchangeStockIds = new Set(["005930", "000660", "035720", "035420", "373220", "005380", "066570"]);
 const ORDERBOOK_DISPLAY_DEPTH = 5;
+const DEFAULT_DOMESTIC_EXCHANGE = "KRX";
+const FALLBACK_DOMESTIC_EXCHANGE = "NXT";
+const ORDERBOOK_MAX_DEVIATION_RATE = 0.15;
+const REALTIME_MAX_DEVIATION_RATE = 0.15;
 const tradingPriceCache = new Map<string, PriceData>();
 const tradingOrderbookCache = new Map<string, OrderbookData>();
 const tradingExecutionCache = new Map<string, ExecutionData[]>();
@@ -158,7 +162,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
       if (!isActive) return;
       setLiveStatus((status) => (status === "connected" ? status : "loading"));
       try {
-        const response = await getKbCurrentPrice(stockCode, "real", exchange);
+        const response = await getKbCurrentPriceWithDomesticFallback(stockCode, "real", data.stock, exchange);
         if (!isActive) return;
         const snapshot = response.data;
         if (response.status === "success" && snapshot) {
@@ -218,6 +222,9 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
           if (payload.type === "price" && nextPrice) {
             setLivePrice((current) => {
               const mergeBase = getPriceDataForStock(current, data.stock, marketDataKey);
+              if (shouldIgnoreRealtimePriceData(nextPrice, mergeBase)) {
+                return current;
+              }
               const nextQuote = mergePriceData(mergeBase, nextPrice);
               tradingPriceCache.set(marketDataKey, nextQuote);
               return nextQuote;
@@ -285,10 +292,12 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
       if (!scopedNext) return;
       setOrderbookData((current) => {
         const cached = getOrderbookDataForStock(current, data.stock, marketDataKey);
+        const referenceQuote = tradingPriceCache.get(marketDataKey) ?? null;
+        const referenceCurrentPrice = referenceQuote?.price ?? 0;
         const nextOrderbook = {
           stock_code: scopedNext.stock_code ?? cached?.stock_code ?? stockCode,
           stock_name: scopedNext.stock_name ?? cached?.stock_name ?? stockName,
-          current_price: numberOr(scopedNext.current_price, cached?.current_price ?? 0),
+          current_price: normalizeOrderbookCurrentPrice(scopedNext.current_price, cached?.current_price, referenceCurrentPrice),
           ask_prices: scopedNext.ask_prices ?? cached?.ask_prices ?? [],
           ask_volumes: scopedNext.ask_volumes ?? cached?.ask_volumes ?? [],
           bid_prices: scopedNext.bid_prices ?? cached?.bid_prices ?? [],
@@ -308,7 +317,13 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     };
 
     const fetchOrderbook = async () => {
-      const response = await getOrderbook(stockCode, "real", exchange);
+      let response = await getOrderbook(stockCode, "real", exchange);
+      if (shouldUseDomesticOrderbookFallback(response.data, data.stock, exchange)) {
+        const fallbackResponse = await getOrderbook(stockCode, "real", FALLBACK_DOMESTIC_EXCHANGE);
+        if (fallbackResponse.status === "success" && hasOrderbookLevels(fallbackResponse.data)) {
+          response = fallbackResponse;
+        }
+      }
       if (!isActive) return;
       if (response.status === "success" && response.data) {
         applyOrderbook(response.data);
@@ -1224,6 +1239,7 @@ function CurrentPricePanel({ livePrice, stock }: { livePrice: PriceData | null; 
 
 type OrderbookSide = "ask" | "bid";
 type OrderbookStatItem = { label: string; value: string; tone: PriceTone };
+type NormalizedOrderbookLevel = { price: number; volume: number };
 
 function OrderBookPanel({
   orderbook,
@@ -1247,10 +1263,11 @@ function OrderBookPanel({
   const currency = orderbook?.currency ?? livePrice?.currency ?? inferStockCurrency(stock);
   const liveCurrentPrice = livePrice && livePrice.price > 0 ? livePrice.price : null;
   const rateReferencePrice = livePrice?.previous_close || liveCurrentPrice || orderbook?.current_price || 0;
-  const displayRows = padOrderbookRows(orderbook ? orderbookToRows(orderbook, rateReferencePrice) : rows.map((row) => toDisplayOrderBookRow(row, currentPrice)));
+  const orderbookReferencePrice = liveCurrentPrice ?? orderbook?.current_price ?? 0;
+  const displayRows = padOrderbookRows(orderbook ? orderbookToRows(orderbook, rateReferencePrice, orderbookReferencePrice) : rows.map((row) => toDisplayOrderBookRow(row, currentPrice)));
   const askRows = displayRows.slice(0, ORDERBOOK_DISPLAY_DEPTH);
   const bidRows = displayRows.slice(ORDERBOOK_DISPLAY_DEPTH, ORDERBOOK_DISPLAY_DEPTH * 2);
-  const displayExecutions = executions && executions.length > 0 ? executionsToRows(executions, currency).slice(0, 5) : executionRows.map(toPendingExecutionRow).slice(0, 5);
+  const displayExecutions = padExecutionRows(executions === null ? executionRows.map(toPendingExecutionRow) : executionsToRows(executions, currency), 5);
   const askVolumes = askRows.map((row) => toNumber(row.askQuantity ?? "0"));
   const bidVolumes = bidRows.map((row) => toNumber(row.bidQuantity ?? "0"));
   const maxAskVolume = Math.max(...askVolumes, 1);
@@ -1428,7 +1445,7 @@ function OrderbookStatsList({ stats }: { stats: OrderbookStatItem[] }) {
 }
 
 function ExecutionPanel({ executions, rows }: { executions: ExecutionData[] | null; rows: ExecutionRow[] }) {
-  const displayRows = executions && executions.length > 0 ? executionsToRows(executions) : rows.map(toPendingExecutionRow);
+  const displayRows = padExecutionRows(executions === null ? rows.map(toPendingExecutionRow) : executionsToRows(executions), Math.max(rows.length, 5));
 
   return (
     <div className="p-2">
@@ -1438,8 +1455,8 @@ function ExecutionPanel({ executions, rows }: { executions: ExecutionData[] | nu
         <span>대비</span>
         <span>체결량</span>
       </div>
-      {displayRows.map((row) => (
-        <div key={`${row.time}-${row.quantity}`} className="grid grid-cols-4 border-b border-slate-100 px-3 py-1.5 text-center text-xs">
+      {displayRows.map((row, index) => (
+        <div key={`${row.time}-${row.quantity}-${index}`} className="grid grid-cols-4 border-b border-slate-100 px-3 py-1.5 text-center text-xs">
           <span className="tabular-nums text-slate-500">{row.time}</span>
           <span className={`font-extrabold tabular-nums ${toneTextClass(row.tone)}`}>{row.price}</span>
           <span className={`font-bold tabular-nums ${toneTextClass(row.tone)}`}>{row.change}</span>
@@ -1801,12 +1818,12 @@ function isOrderbookCurrentRow(price: string, centerPrice: number, currency?: st
   return rowPrice > 0 && Math.abs(rowPrice - centerPrice) <= tolerance;
 }
 
-function orderbookToRows(orderbook: OrderbookData, referencePrice?: number): OrderBookRow[] {
+function orderbookToRows(orderbook: OrderbookData, referencePrice?: number, centerPrice?: number): OrderBookRow[] {
   const currentPrice = orderbook.current_price || 0;
   const rateReferencePrice = referencePrice && referencePrice > 0 ? referencePrice : currentPrice;
   const currency = orderbook.currency;
-  const askRows: OrderBookRow[] = (orderbook.ask_prices ?? []).slice(0, ORDERBOOK_DISPLAY_DEPTH).map((price, index) => {
-    const volume = orderbook.ask_volumes?.[index] ?? 0;
+  const { asks, bids } = normalizeOrderbookLevels(orderbook, centerPrice);
+  const askRows: OrderBookRow[] = asks.slice(0, ORDERBOOK_DISPLAY_DEPTH).map(({ price, volume }) => {
     return {
       askQuantity: formatInteger(volume),
       price: formatLadderPrice(price, currency),
@@ -1814,8 +1831,7 @@ function orderbookToRows(orderbook: OrderbookData, referencePrice?: number): Ord
       tone: toneFromNumber(price - rateReferencePrice),
     };
   });
-  const bidRows: OrderBookRow[] = (orderbook.bid_prices ?? []).slice(0, ORDERBOOK_DISPLAY_DEPTH).map((price, index) => {
-    const volume = orderbook.bid_volumes?.[index] ?? 0;
+  const bidRows: OrderBookRow[] = bids.slice(0, ORDERBOOK_DISPLAY_DEPTH).map(({ price, volume }) => {
     return {
       price: formatLadderPrice(price, currency),
       changeRate: formatOrderbookRate(price, rateReferencePrice),
@@ -1827,6 +1843,32 @@ function orderbookToRows(orderbook: OrderbookData, referencePrice?: number): Ord
   return [...askRows.reverse(), ...bidRows].filter((row) => row.price !== "0" || row.askQuantity !== "0" || row.bidQuantity !== "0");
 }
 
+function normalizeOrderbookLevels(orderbook: OrderbookData, centerPrice?: number) {
+  const referencePrice = centerPrice && centerPrice > 0 ? centerPrice : orderbook.current_price || 0;
+  const asks = collectOrderbookLevels(orderbook.ask_prices, orderbook.ask_volumes);
+  const bids = collectOrderbookLevels(orderbook.bid_prices, orderbook.bid_volumes);
+  if (referencePrice <= 0) {
+    return { asks, bids };
+  }
+
+  return {
+    asks: filterOrderbookOutliers(asks, referencePrice).sort((left, right) => left.price - right.price),
+    bids: filterOrderbookOutliers(bids, referencePrice).sort((left, right) => right.price - left.price),
+  };
+}
+
+function collectOrderbookLevels(prices: number[] | null | undefined, volumes: number[] | null | undefined): NormalizedOrderbookLevel[] {
+  return (prices ?? [])
+    .map((price, index) => ({ price, volume: volumes?.[index] ?? 0 }))
+    .filter(({ price }) => Number.isFinite(price) && price > 0);
+}
+
+function filterOrderbookOutliers(levels: NormalizedOrderbookLevel[], referencePrice: number) {
+  const lowerBound = referencePrice * (1 - ORDERBOOK_MAX_DEVIATION_RATE);
+  const upperBound = referencePrice * (1 + ORDERBOOK_MAX_DEVIATION_RATE);
+  return levels.filter(({ price }) => price >= lowerBound && price <= upperBound);
+}
+
 function executionsToRows(executions: ExecutionData[], currency?: string | null): ExecutionRow[] {
   return executions.map((execution, index) => ({
     time: execution.time || String(index + 1),
@@ -1835,6 +1877,24 @@ function executionsToRows(executions: ExecutionData[], currency?: string | null)
     quantity: formatInteger(execution.quantity),
     tone: execution.side === "buy" ? "up" : execution.side === "sell" ? "down" : toneFromNumber(execution.change),
   }));
+}
+
+function padExecutionRows(rows: ExecutionRow[], size: number) {
+  const paddedRows = rows.slice(0, size);
+  while (paddedRows.length < size) {
+    paddedRows.push(createPendingExecutionRow());
+  }
+  return paddedRows;
+}
+
+function createPendingExecutionRow(): ExecutionRow {
+  return {
+    time: "0",
+    price: "0",
+    change: "0",
+    quantity: "0",
+    tone: "neutral",
+  };
 }
 
 function formatOrderbookRate(price: number, currentPrice: number) {
@@ -1877,14 +1937,7 @@ function toDisplayOrderBookRow(row: OrderBookRow, currentPrice: string): OrderBo
 }
 
 function toPendingExecutionRow(row: ExecutionRow): ExecutionRow {
-  return {
-    ...row,
-    time: "0",
-    price: "0",
-    change: "0",
-    quantity: "0",
-    tone: "neutral",
-  };
+  return { ...row, ...createPendingExecutionRow() };
 }
 
 function toPendingBrokerTradeRow(row: BrokerTradeRow): BrokerTradeRow {
@@ -2250,8 +2303,71 @@ function isKbMarketDataSupported(stock: TradingWorkspaceData["stock"]) {
   return isKisRealtimeSupported(stock) || /^[A-Z][A-Z0-9.-]{0,11}$/.test(stock.code);
 }
 
+async function getKbCurrentPriceWithDomesticFallback(
+  stockCode: string,
+  envDv: string,
+  stock: TradingWorkspaceData["stock"],
+  exchange?: string | null
+) {
+  const primaryResponse = await getKbCurrentPrice(stockCode, envDv, exchange);
+  if (!shouldUseDomesticPriceFallback(primaryResponse.data, stock, exchange)) {
+    return primaryResponse;
+  }
+
+  const fallbackResponse = await getKbCurrentPrice(stockCode, envDv, FALLBACK_DOMESTIC_EXCHANGE);
+  if (fallbackResponse.status === "success" && hasLivePriceData(fallbackResponse.data)) {
+    return fallbackResponse;
+  }
+
+  return primaryResponse;
+}
+
+function shouldUseDomesticPriceFallback(price: PriceData | null | undefined, stock: TradingWorkspaceData["stock"], exchange?: string | null) {
+  return isDomesticMarketStock(stock) && normalizeExchangeCode(exchange) === DEFAULT_DOMESTIC_EXCHANGE && !hasLivePriceData(price);
+}
+
+function shouldUseDomesticOrderbookFallback(orderbook: OrderbookData | null | undefined, stock: TradingWorkspaceData["stock"], exchange?: string | null) {
+  return isDomesticMarketStock(stock) && normalizeExchangeCode(exchange) === DEFAULT_DOMESTIC_EXCHANGE && !hasOrderbookLevels(orderbook);
+}
+
+function hasLivePriceData(price: PriceData | null | undefined) {
+  return Boolean(price && Number.isFinite(price.price) && price.price > 0);
+}
+
+function hasOrderbookLevels(orderbook: OrderbookData | null | undefined) {
+  if (!orderbook) return false;
+  return collectOrderbookLevels(orderbook.ask_prices, orderbook.ask_volumes).length > 0 || collectOrderbookLevels(orderbook.bid_prices, orderbook.bid_volumes).length > 0;
+}
+
+function normalizeOrderbookCurrentPrice(nextPrice: number | null | undefined, cachedPrice: number | null | undefined, referencePrice: number) {
+  const normalizedNextPrice = numberOr(nextPrice, 0);
+  if (referencePrice > 0 && normalizedNextPrice > 0 && isOrderbookPriceOutlier(normalizedNextPrice, referencePrice)) {
+    return referencePrice;
+  }
+  return numberOr(nextPrice, numberOr(cachedPrice, referencePrice));
+}
+
+function isOrderbookPriceOutlier(price: number, referencePrice: number) {
+  if (!Number.isFinite(price) || !Number.isFinite(referencePrice) || price <= 0 || referencePrice <= 0) return false;
+  return Math.abs(price - referencePrice) / referencePrice > ORDERBOOK_MAX_DEVIATION_RATE;
+}
+
+function shouldIgnoreRealtimePriceData(next: Partial<PriceData>, current: PriceData | null) {
+  if (!current || !hasLivePriceData(current) || !hasLivePriceData(next as PriceData)) return false;
+  if (!isRealtimeSource(next.source) || !isKbSource(current.source)) return false;
+  return Math.abs((next.price ?? 0) - current.price) / current.price > REALTIME_MAX_DEVIATION_RATE;
+}
+
+function isRealtimeSource(source?: string | null) {
+  return String(source || "").toLowerCase().includes("kis");
+}
+
+function isKbSource(source?: string | null) {
+  return String(source || "").toLowerCase().startsWith("kb");
+}
+
 function getMarketDataExchange(stock: TradingWorkspaceData["stock"]) {
-  return isDomesticMarketStock(stock) ? "NXT" : stock.exchange;
+  return isDomesticMarketStock(stock) ? DEFAULT_DOMESTIC_EXCHANGE : stock.exchange;
 }
 
 function getMarketDataKey(stock: TradingWorkspaceData["stock"]) {
@@ -2332,8 +2448,12 @@ function isDomesticMarketStock(stock: TradingWorkspaceData["stock"]) {
 }
 
 function isDomesticExchangeLabel(exchange: string | null | undefined) {
-  const normalized = String(exchange || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+  const normalized = normalizeExchangeCode(exchange);
   return !normalized || normalized === "KR" || normalized === "KOR" || normalized.includes("KRX") || normalized.includes("KOS") || normalized.includes("NXT");
+}
+
+function normalizeExchangeCode(exchange: string | null | undefined) {
+  return String(exchange || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
 }
 
 function applyQuoteToWatchItem(item: WatchItem, quotes: Record<string, Parameters<typeof formatSharedQuoteDisplay>[0]>): WatchItem {
@@ -2448,7 +2568,7 @@ function createCandidateFromFreeText(value: string): WatchlistCandidate {
 }
 
 function inferWatchExchange(symbol: string) {
-  return /^\d{6}$/.test(symbol) ? "NXT" : "NASDAQ";
+  return /^\d{6}$/.test(symbol) ? DEFAULT_DOMESTIC_EXCHANGE : "NASDAQ";
 }
 
 function createEditableWatchItem({
