@@ -205,11 +205,21 @@ def test_kb_b2c_overseas_executions_are_normalized():
 
 def test_market_identifier_keeps_domestic_and_overseas_routes_separate():
     domestic = _resolve_market_identifier("5930", "KRX")
+    domestic_nxt = _resolve_market_identifier("005930", "NXT")
+    domestic_dual = _resolve_market_identifier("005930", "KRX/NXT")
     overseas = _resolve_market_identifier("AAPL", "NASDAQ")
     numeric_overseas = _resolve_market_identifier("005930", "NASDAQ")
 
     assert domestic["is_domestic"] is True
     assert domestic["stock_code"] == "005930"
+    assert domestic["exchange"] == "KRX"
+    assert domestic["domestic_exchange_class"] == "1"
+    assert domestic_nxt["is_domestic"] is True
+    assert domestic_nxt["exchange"] == "NXT"
+    assert domestic_nxt["domestic_exchange_class"] == "2"
+    assert domestic_dual["is_domestic"] is True
+    assert domestic_dual["exchange"] == "NXT"
+    assert domestic_dual["domestic_exchange_class"] == "2"
     assert overseas["is_domestic"] is False
     assert overseas["stock_code"] == "AAPL"
     assert overseas["krx_cd"] == "NAS"

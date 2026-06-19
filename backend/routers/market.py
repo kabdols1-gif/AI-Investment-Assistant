@@ -126,18 +126,19 @@ async def get_executions(
 
 
 @router.websocket("/ws/price/{stock_code}")
-async def websocket_price(websocket: WebSocket, stock_code: str, env_dv: str = "real"):
+async def websocket_price(websocket: WebSocket, stock_code: str, env_dv: str = "real", exchange: str | None = None):
     """Stream KIS realtime price frames for a stock."""
 
     await websocket.accept()
-    logging.info("KIS price WebSocket connected: %s", stock_code)
+    logging.info("KIS price WebSocket connected: %s exchange=%s", stock_code, exchange or "-")
 
     try:
-        async for price_data in stream_kis_realtime_price(stock_code, env_dv):
+        async for price_data in stream_kis_realtime_price(stock_code, env_dv, exchange):
             await websocket.send_json(
                 {
                     "type": "price",
                     "stock_code": stock_code,
+                    "exchange": exchange,
                     "source": "kis_realtime",
                     "data": price_data,
                 }
@@ -169,16 +170,16 @@ async def websocket_price(websocket: WebSocket, stock_code: str, env_dv: str = "
         except Exception:
             pass
     finally:
-        logging.info("KIS price WebSocket closed: %s", stock_code)
+        logging.info("KIS price WebSocket closed: %s exchange=%s", stock_code, exchange or "-")
 
 
 @router.websocket("/ws/prices")
-async def websocket_prices(websocket: WebSocket, codes: str = "", env_dv: str = "real"):
+async def websocket_prices(websocket: WebSocket, codes: str = "", env_dv: str = "real", exchange: str | None = None):
     """Stream KIS realtime price frames for multiple stocks."""
 
     await websocket.accept()
     stock_codes = [code.strip() for code in codes.split(",") if code.strip()]
-    logging.info("KIS multi-price WebSocket connected: %s", ",".join(stock_codes))
+    logging.info("KIS multi-price WebSocket connected: %s exchange=%s", ",".join(stock_codes), exchange or "-")
 
     if not stock_codes:
         await websocket.send_json(
@@ -198,13 +199,15 @@ async def websocket_prices(websocket: WebSocket, codes: str = "", env_dv: str = 
                 "status": "subscribing",
                 "source": "kis_realtime",
                 "stock_codes": stock_codes,
+                "exchange": exchange,
             }
         )
-        async for price_data in stream_kis_realtime_prices(stock_codes, env_dv):
+        async for price_data in stream_kis_realtime_prices(stock_codes, env_dv, exchange):
             await websocket.send_json(
                 {
                     "type": "price",
                     "stock_code": price_data.get("stock_code"),
+                    "exchange": exchange,
                     "source": "kis_realtime",
                     "data": price_data,
                 }
@@ -236,7 +239,7 @@ async def websocket_prices(websocket: WebSocket, codes: str = "", env_dv: str = 
         except Exception:
             pass
     finally:
-        logging.info("KIS multi-price WebSocket closed: %s", ",".join(stock_codes))
+        logging.info("KIS multi-price WebSocket closed: %s exchange=%s", ",".join(stock_codes), exchange or "-")
 
 
 @router.websocket("/ws/{stock_code}")

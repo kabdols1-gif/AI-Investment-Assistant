@@ -9,6 +9,7 @@ type QuoteMap = Record<string, PriceData | null>;
 
 type UseMarketQuotesOptions = {
   enabled?: boolean;
+  domesticExchange?: string | null;
   envDv?: string;
   realtime?: boolean;
   refreshIntervalMs?: number;
@@ -18,7 +19,7 @@ const quoteCache = new Map<string, PriceData>();
 const quoteRequests = new Map<string, Promise<PriceData | null>>();
 
 export function useMarketQuotes(codes: Array<string | null | undefined>, options: UseMarketQuotesOptions = {}) {
-  const { enabled = true, envDv = "real", realtime = true, refreshIntervalMs = 30000 } = options;
+  const { domesticExchange = "NXT", enabled = true, envDv = "real", realtime = true, refreshIntervalMs = 30000 } = options;
   const codeKey = codes.map(normalizeQuoteCode).filter(Boolean).sort().join("|");
   const quoteCodes = useMemo(
     () => (codeKey ? Array.from(new Set(codeKey.split("|").filter(isKbQuoteCode))) : []),
@@ -52,7 +53,7 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
     quoteCodes.forEach((code) => {
       if (!forceRefresh && quoteCache.has(code)) return;
 
-      void requestQuote(code, envDv, forceRefresh)
+      void requestQuote(code, envDv, forceRefresh, quoteExchange(code, domesticExchange))
         .then((quote) => {
           if (cancelled) return;
           setQuoteResults((current) => ({ ...current, [code]: quote }));
@@ -66,7 +67,7 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
     return () => {
       cancelled = true;
     };
-  }, [enabled, envDv, quoteCodes, refreshTick]);
+  }, [domesticExchange, enabled, envDv, quoteCodes, refreshTick]);
 
   useEffect(() => {
     if (!enabled || !realtime || realtimeCodes.length === 0 || typeof window === "undefined") {
@@ -78,11 +79,14 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
     let reconnectTimer: number | null = null;
     let reconnectAttempts = 0;
     const codesParam = realtimeCodes.map(encodeURIComponent).join(",");
+    const exchangeParam = quoteExchange(realtimeCodes[0], domesticExchange);
 
     const connect = () => {
       if (!active) return;
       socket?.close();
-      socket = new WebSocket(`${getWsBase()}/api/market/ws/prices?codes=${codesParam}&env_dv=${encodeURIComponent(envDv)}`);
+      const params = new URLSearchParams({ codes: codesParam, env_dv: envDv });
+      if (exchangeParam) params.set("exchange", exchangeParam);
+      socket = new WebSocket(`${getWsBase()}/api/market/ws/prices?${params.toString()}`);
 
       socket.onopen = () => {
         reconnectAttempts = 0;
@@ -143,7 +147,7 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
         socket.close();
       }
     };
-  }, [enabled, envDv, realtimeCodes, realtime]);
+  }, [enabled, envDv, realtimeCodes, realtime, domesticExchange]);
 
   const getQuote = useCallback((code: string | null | undefined) => quotes[normalizeQuoteCode(code)] ?? null, [quotes]);
 
@@ -161,18 +165,18 @@ function buildQuoteMap(codes: string[], quoteResults: QuoteMap) {
   }, {});
 }
 
-async function requestQuote(code: string, envDv: string, forceRefresh = false) {
+async function requestQuote(code: string, envDv: string, forceRefresh = false, exchange?: string | null) {
   const cached = quoteCache.get(code);
-  if (cached && !forceRefresh) return cached;
+  if (cached && !forceRefresh && hasLivePrice(cached)) return cached;
 
-  const requestKey = `${envDv}:${code}`;
+  const requestKey = `${envDv}:${exchange || "-"}:${code}`;
   const existingRequest = quoteRequests.get(requestKey);
   if (existingRequest) return existingRequest;
 
-  const request = getKbCurrentPrice(code, envDv)
+  const request = getKbCurrentPrice(code, envDv, exchange)
     .then((response) => {
       const quote = response.status === "success" ? response.data ?? null : null;
-      if (quote) {
+      if (quote && hasLivePrice(quote)) {
         quoteCache.set(code, quote);
       }
       return quote;
@@ -202,6 +206,8 @@ function mergeRealtimeQuote(code: string, current: PriceData | null, next: Parti
     w52_low: numberOr(next.w52_low, current?.w52_low ?? 0),
     timestamp: next.timestamp ?? current?.timestamp ?? null,
     source: next.source ?? current?.source ?? "kis_realtime",
+    exchange: next.exchange ?? current?.exchange,
+    currency: next.currency ?? current?.currency,
   };
 }
 
@@ -211,4 +217,8 @@ function numberOr(value: number | null | undefined, fallback: number) {
 
 function hasLivePrice(quote: PriceData) {
   return Number.isFinite(quote.price) && quote.price > 0;
+}
+
+function quoteExchange(code: string, domesticExchange?: string | null) {
+  return isKrxQuoteCode(code) ? domesticExchange || "NXT" : undefined;
 }

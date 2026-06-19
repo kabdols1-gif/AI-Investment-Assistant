@@ -1,16 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Calculator,
   ExternalLink,
+  GripVertical,
   Minus,
   Newspaper,
+  Pencil,
   Plus,
   RotateCcw,
   Settings,
+  Trash2,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import { BrokerConnectionGate } from "@/components/settings/BrokerConnectionGate";
 import { LightweightCandlestickChart } from "@/components/charts/LightweightCharts";
@@ -25,10 +29,12 @@ import {
   type OrderbookData,
   type PriceData,
 } from "@/lib/api/market";
+import { searchSymbols } from "@/lib/api/symbols";
 import type { BrokerProviderOption } from "@/lib/brokerProviders";
 import { tradingWorkspaceByStockId, watchItems } from "@/lib/mockData";
 import { formatQuoteDisplay as formatSharedQuoteDisplay, getQuoteFromMap } from "@/lib/marketQuoteDisplay";
-import { readStoredWatchItems, WATCHLIST_STORAGE_EVENT, type WatchItem } from "@/lib/watchlistStorage";
+import { readStoredWatchItems, WATCHLIST_STORAGE_EVENT, writeStoredWatchItems, type WatchItem } from "@/lib/watchlistStorage";
+import type { Symbol as MasterSymbol } from "@/types/symbols";
 import type {
   BalanceEvaluationRow,
   BrokerTradeRow,
@@ -47,6 +53,11 @@ type OrderTab = "매수" | "매도" | "정정" | "취소";
 type BottomTab = "차트" | "예수금" | "주문내역" | "매매손익" | "잔고평가" | "뉴스";
 type WorkspaceOrderSide = "buy" | "sell";
 type LiveQuoteStatus = "idle" | "loading" | "connected" | "polling" | "error";
+type WatchlistCandidate = {
+  exchange: string;
+  name: string;
+  symbol: string;
+};
 
 const leftInfoTabs: LeftInfoTab[] = ["관심종목", "현재가"];
 const marketInfoTabs: MarketInfoTab[] = ["호가", "체결", "거래원"];
@@ -57,6 +68,9 @@ const ratios = ["10%", "25%", "50%", "100%", "직접"];
 const chartPeriods = ["1분", "5분", "15분", "30분", "일", "주", "월"];
 const dualExchangeStockIds = new Set(["005930", "000660", "035720", "035420", "373220", "005380", "066570"]);
 const ORDERBOOK_DISPLAY_DEPTH = 5;
+const tradingPriceCache = new Map<string, PriceData>();
+const tradingOrderbookCache = new Map<string, OrderbookData>();
+const tradingExecutionCache = new Map<string, ExecutionData[]>();
 
 interface TradingWorkspaceProps {
   data: TradingWorkspaceData;
@@ -70,6 +84,8 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   const toast = useToast();
   const initialOrderTab = initialOrderSide === "sell" ? "매도" : "매수";
   const initialQuantity = normalizeOrderQuantity(initialOrderQuantity);
+  const initialMarketDataKey = getMarketDataKey(data.stock);
+  const currentMarketDataKey = getMarketDataKey(data.stock);
   const [leftInfoTab, setLeftInfoTab] = useState<LeftInfoTab>("관심종목");
   const [marketInfoTab, setMarketInfoTab] = useState<MarketInfoTab>("호가");
   const [orderTab, setOrderTab] = useState<OrderTab>(initialOrderTab);
@@ -79,27 +95,40 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   const [period, setPeriod] = useState("일");
   const [orderDraft, setOrderDraft] = useState({
     stockId: data.stock.id,
-    price: createPendingQuoteStock(data.stock).price,
+    price: getInitialOrderPrice(data.stock, initialMarketDataKey),
     quantity: initialQuantity,
   });
   const [watchlistItems, setWatchlistItems] = useState<WatchItem[]>([]);
-  const [livePrice, setLivePrice] = useState<PriceData | null>(null);
+  const [livePrice, setLivePrice] = useState<PriceData | null>(() => tradingPriceCache.get(initialMarketDataKey) ?? null);
   const [liveStatus, setLiveStatus] = useState<LiveQuoteStatus>("idle");
   const [liveError, setLiveError] = useState<string | null>(null);
-  const [orderbookData, setOrderbookData] = useState<OrderbookData | null>(null);
-  const [executionData, setExecutionData] = useState<ExecutionData[] | null>(null);
+  const [orderbookData, setOrderbookData] = useState<OrderbookData | null>(() => tradingOrderbookCache.get(initialMarketDataKey) ?? null);
+  const [executionData, setExecutionData] = useState<ExecutionData[] | null>(() => tradingExecutionCache.get(initialMarketDataKey) ?? null);
+  const [executionDataKey, setExecutionDataKey] = useState<string | null>(() => (tradingExecutionCache.has(initialMarketDataKey) ? initialMarketDataKey : null));
   const liveReconnectRef = useRef<number | null>(null);
   const orderbookReconnectRef = useRef<number | null>(null);
   const { quotes: watchlistQuotes } = useMarketQuotes(watchlistItems.map((item) => item.symbol));
+  const currentLivePrice = useMemo(() => {
+    if (isPriceDataForStock(livePrice, data.stock)) return livePrice;
+    return tradingPriceCache.get(currentMarketDataKey) ?? null;
+  }, [currentMarketDataKey, data.stock, livePrice]);
+  const currentOrderbookData = useMemo(() => {
+    if (isOrderbookDataForStock(orderbookData, data.stock)) return orderbookData;
+    return tradingOrderbookCache.get(currentMarketDataKey) ?? null;
+  }, [currentMarketDataKey, data.stock, orderbookData]);
+  const currentExecutionData = useMemo(() => {
+    if (executionDataKey === currentMarketDataKey) return executionData;
+    return tradingExecutionCache.get(currentMarketDataKey) ?? null;
+  }, [currentMarketDataKey, executionData, executionDataKey]);
   const displayWatchlistItems = useMemo(
     () => watchlistItems.map((item) => applyQuoteToWatchItem(item, watchlistQuotes)),
     [watchlistItems, watchlistQuotes]
   );
-  const liveStock = useMemo(() => mergeLiveStock(data.stock, livePrice), [data.stock, livePrice]);
+  const liveStock = useMemo(() => mergeLiveStock(data.stock, currentLivePrice), [data.stock, currentLivePrice]);
   const liveData = useMemo<TradingWorkspaceData>(() => ({ ...data, stock: liveStock }), [data, liveStock]);
   const draftPrice = orderDraft.stockId === liveData.stock.id ? orderDraft.price : liveData.stock.price;
   const draftQuantity = orderDraft.stockId === liveData.stock.id ? orderDraft.quantity : "0";
-  const orderCurrency = livePrice?.currency ?? orderbookData?.currency ?? inferStockCurrency(data.stock);
+  const orderCurrency = currentLivePrice?.currency ?? currentOrderbookData?.currency ?? inferStockCurrency(data.stock);
 
   useEffect(() => {
     const syncWatchlist = () => {
@@ -114,7 +143,6 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
 
   useEffect(() => {
     if (!isKbMarketDataSupported(data.stock)) {
-      setLivePrice(null);
       setLiveStatus("idle");
       setLiveError(null);
       return;
@@ -124,7 +152,8 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     let socket: WebSocket | null = null;
     let pollTimer: number | null = null;
     const stockCode = data.stock.code;
-    const exchange = data.stock.exchange;
+    const exchange = getMarketDataExchange(data.stock);
+    const marketDataKey = getMarketDataKey(data.stock);
     const realtimeSupported = isKisRealtimeSupported(data.stock);
 
     const fetchSnapshot = async () => {
@@ -135,7 +164,16 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
         if (!isActive) return;
         const snapshot = response.data;
         if (response.status === "success" && snapshot) {
-          setLivePrice((current) => mergePriceData(current, snapshot));
+          const snapshotForStock = {
+            ...snapshot,
+            stock_code: snapshot.stock_code ?? stockCode,
+            exchange: snapshot.exchange ?? exchange,
+          };
+          setLivePrice((current) => {
+            const nextQuote = mergePriceData(current ?? tradingPriceCache.get(marketDataKey) ?? null, snapshotForStock);
+            tradingPriceCache.set(marketDataKey, nextQuote);
+            return nextQuote;
+          });
           setLiveError(null);
           setLiveStatus((status) => (status === "connected" ? status : "polling"));
           return;
@@ -151,7 +189,9 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     const connectRealtime = () => {
       if (!isActive) return;
       socket?.close();
-      socket = new WebSocket(`${getWsBase()}/api/market/ws/price/${stockCode}?env_dv=real`);
+      const params = new URLSearchParams({ env_dv: "real" });
+      if (exchange) params.set("exchange", exchange);
+      socket = new WebSocket(`${getWsBase()}/api/market/ws/price/${encodeURIComponent(stockCode)}?${params.toString()}`);
 
       socket.onopen = () => {
         if (!isActive) return;
@@ -169,9 +209,20 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
             message?: string;
             data?: Partial<PriceData>;
           };
-          const nextPrice = payload.data ? { ...payload.data, source: payload.source === "kis_realtime" ? "kis" : payload.data.source } : null;
+          const nextPrice = payload.data
+            ? {
+                ...payload.data,
+                stock_code: payload.data.stock_code ?? stockCode,
+                exchange: payload.data.exchange ?? exchange,
+                source: payload.source === "kis_realtime" ? "kis" : payload.data.source,
+              }
+            : null;
           if (payload.type === "price" && nextPrice) {
-            setLivePrice((current) => mergePriceData(current, nextPrice));
+            setLivePrice((current) => {
+              const nextQuote = mergePriceData(current ?? tradingPriceCache.get(marketDataKey) ?? null, nextPrice);
+              tradingPriceCache.set(marketDataKey, nextQuote);
+              return nextQuote;
+            });
             setLiveStatus("connected");
             setLiveError(null);
           }
@@ -219,8 +270,6 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
 
   useEffect(() => {
     if (!isKbMarketDataSupported(data.stock)) {
-      setOrderbookData(null);
-      setExecutionData(null);
       return;
     }
 
@@ -228,36 +277,41 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     let executionTimer: number | null = null;
     let orderbookSocket: WebSocket | null = null;
     const stockCode = data.stock.code;
-    const exchange = data.stock.exchange;
+    const exchange = getMarketDataExchange(data.stock);
+    const marketDataKey = getMarketDataKey(data.stock);
     const stockName = data.stock.name;
 
     const applyOrderbook = (next: Partial<OrderbookData>, timestamp?: string | null) => {
-      setOrderbookData((current) => ({
-        stock_code: next.stock_code ?? current?.stock_code ?? stockCode,
-        stock_name: next.stock_name ?? current?.stock_name ?? stockName,
-        current_price: numberOr(next.current_price, current?.current_price ?? 0),
-        ask_prices: next.ask_prices ?? current?.ask_prices ?? [],
-        ask_volumes: next.ask_volumes ?? current?.ask_volumes ?? [],
-        bid_prices: next.bid_prices ?? current?.bid_prices ?? [],
-        bid_volumes: next.bid_volumes ?? current?.bid_volumes ?? [],
-        total_ask_volume: numberOr(next.total_ask_volume, current?.total_ask_volume ?? 0),
-        total_bid_volume: numberOr(next.total_bid_volume, current?.total_bid_volume ?? 0),
-        expected_price: numberOr(next.expected_price, current?.expected_price ?? 0),
-        expected_volume: numberOr(next.expected_volume, current?.expected_volume ?? 0),
-        timestamp: next.timestamp ?? timestamp ?? current?.timestamp ?? null,
-        source: next.source ?? current?.source ?? "kb_b2c",
-        exchange: next.exchange ?? current?.exchange ?? exchange,
-        currency: next.currency ?? current?.currency ?? inferStockCurrency(data.stock),
-      }));
+      setOrderbookData((current) => {
+        const cached = current ?? tradingOrderbookCache.get(marketDataKey);
+        const nextOrderbook = {
+          stock_code: next.stock_code ?? cached?.stock_code ?? stockCode,
+          stock_name: next.stock_name ?? cached?.stock_name ?? stockName,
+          current_price: numberOr(next.current_price, cached?.current_price ?? 0),
+          ask_prices: next.ask_prices ?? cached?.ask_prices ?? [],
+          ask_volumes: next.ask_volumes ?? cached?.ask_volumes ?? [],
+          bid_prices: next.bid_prices ?? cached?.bid_prices ?? [],
+          bid_volumes: next.bid_volumes ?? cached?.bid_volumes ?? [],
+          total_ask_volume: numberOr(next.total_ask_volume, cached?.total_ask_volume ?? 0),
+          total_bid_volume: numberOr(next.total_bid_volume, cached?.total_bid_volume ?? 0),
+          expected_price: numberOr(next.expected_price, cached?.expected_price ?? 0),
+          expected_volume: numberOr(next.expected_volume, cached?.expected_volume ?? 0),
+          timestamp: next.timestamp ?? timestamp ?? cached?.timestamp ?? null,
+          source: next.source ?? cached?.source ?? "kb_b2c",
+          exchange: next.exchange ?? cached?.exchange ?? exchange,
+          currency: next.currency ?? cached?.currency ?? inferStockCurrency(data.stock),
+        };
+        tradingOrderbookCache.set(marketDataKey, nextOrderbook);
+        return nextOrderbook;
+      });
     };
 
     const fetchOrderbook = async () => {
       const response = await getOrderbook(stockCode, "real", exchange);
       if (!isActive) return;
       if (response.status === "success" && response.data) {
+        tradingOrderbookCache.set(marketDataKey, response.data);
         setOrderbookData(response.data);
-      } else {
-        setOrderbookData(null);
       }
     };
 
@@ -265,9 +319,10 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
       const response = await getExecutions(stockCode, "real", 10, exchange);
       if (!isActive) return;
       if (response.status === "success" && response.data) {
-        setExecutionData(response.data.executions ?? []);
-      } else {
-        setExecutionData(null);
+        const nextExecutions = response.data.executions ?? [];
+        tradingExecutionCache.set(marketDataKey, nextExecutions);
+        setExecutionDataKey(marketDataKey);
+        setExecutionData(nextExecutions);
       }
     };
 
@@ -302,7 +357,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
 
       orderbookSocket.onerror = () => {
         if (!isActive) return;
-        void fetchOrderbook().catch(() => setOrderbookData(null));
+        void fetchOrderbook().catch(() => undefined);
       };
 
       orderbookSocket.onclose = () => {
@@ -312,15 +367,15 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     };
 
     void fetchOrderbook().catch(() => {
-      if (isActive) setOrderbookData(null);
+      // Keep the last rendered orderbook while the next snapshot is unavailable.
     });
     void fetchExecutions().catch(() => {
-      if (isActive) setExecutionData(null);
+      // Keep the last rendered executions while the next snapshot is unavailable.
     });
     connectOrderbookRealtime();
     executionTimer = window.setInterval(() => {
       void fetchExecutions().catch(() => {
-        if (isActive) setExecutionData(null);
+        // Keep the last rendered executions while retrying.
       });
     }, 15000);
 
@@ -371,7 +426,20 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   };
 
   const handleWatchItemSelect = (symbol: string) => {
-    window.dispatchEvent(new CustomEvent("watchlist-stock-selected", { detail: { id: symbol } }));
+    const normalizedSymbol = normalizeWatchSymbol(symbol);
+    if (!tradingWorkspaceByStockId[normalizedSymbol]) {
+      toast.warning("주문창 데이터가 준비된 종목만 바로 전환할 수 있습니다.");
+      return;
+    }
+    window.dispatchEvent(new CustomEvent("watchlist-stock-selected", { detail: { id: normalizedSymbol } }));
+  };
+
+  const handleWatchlistItemsChange = (nextItems: WatchItem[], nextSelectedSymbol?: string) => {
+    setWatchlistItems(nextItems);
+    writeStoredWatchItems(nextItems);
+    if (nextSelectedSymbol) {
+      window.requestAnimationFrame(() => handleWatchItemSelect(nextSelectedSymbol));
+    }
   };
 
   const handleBalanceStockSell = (row: BalanceEvaluationRow) => {
@@ -386,7 +454,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     setRatio("100%");
     setOrderDraft({
       stockId: stock.id,
-      price: createPendingQuoteStock(stock).price,
+      price: getInitialOrderPrice(stock, getMarketDataKey(stock)),
       quantity: getOrderQuantityFromBalance(row.quantity),
     });
     window.dispatchEvent(new CustomEvent("portfolio-stock-selected", { detail: { id: stock.id } }));
@@ -422,8 +490,9 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
             <LeftStockPanel
               activeTab={leftInfoTab}
               data={liveData}
-              livePrice={livePrice}
+              livePrice={currentLivePrice}
               watchlistItems={displayWatchlistItems}
+              onItemsChange={handleWatchlistItemsChange}
               onSelectWatchItem={handleWatchItemSelect}
               onTabChange={setLeftInfoTab}
             />
@@ -433,10 +502,10 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
             <MarketInfoPanel
               activeTab={marketInfoTab}
               data={liveData}
-              executions={executionData}
-              livePrice={livePrice}
+              executions={currentExecutionData}
+              livePrice={currentLivePrice}
               onCancelOrder={() => setOrderTab("취소")}
-              orderbook={orderbookData}
+              orderbook={currentOrderbookData}
               onTabChange={setMarketInfoTab}
             />
             <BrokerConnectionGate isConnected={brokerConnected} broker={brokerOption}>
@@ -510,9 +579,10 @@ function StockHeader({
   const exchangeLabel = getExchangeDisplayLabel(stock);
   const liveState = getLiveQuoteState(liveStatus, liveError);
   const LiveIcon = liveState.connected ? Wifi : WifiOff;
+  const headerNewsItems = getStockNewsItems(stock).slice(0, 2);
 
   return (
-    <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_auto]">
+    <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.64fr)]">
       <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 rounded-lg bg-[#f8fafc] px-3 py-2">
         <div className="min-w-[132px] max-w-[220px] pr-1">
           <p className="truncate text-xl font-black tracking-normal text-[#071832]">{stock.name}</p>
@@ -536,10 +606,26 @@ function StockHeader({
         <StockHeaderMetric label="거래대금" value={stock.tradingValue} valueClassName="text-base text-[#071832]" />
       </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-2 rounded-lg border border-slate-200 bg-white px-2 py-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 rounded-lg border border-slate-200 bg-white px-2 py-2">
         <span className="px-1 text-xs font-extrabold text-slate-500">종목토론</span>
         <CommunityLink href={getNaverCommunityUrl(stock.code)} label="네이버" icon="N" tone="naver" />
         <CommunityLink href={getTossCommunityUrl(stock.code)} label="토스" icon="T" tone="toss" />
+        <div className="min-w-[190px] flex-1 space-y-1">
+          {headerNewsItems.map((item) => (
+            <a
+              key={item.title}
+              href={item.url}
+              target="_blank"
+              rel="noreferrer"
+              className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-xs font-bold text-[#071832] transition hover:bg-[#fff8e1] focus-ring"
+              title={item.title}
+              aria-label={`${item.title} 뉴스 열기`}
+            >
+              <span className="min-w-0 flex-1 truncate">{item.title}</span>
+              <span className="flex-none text-[10px] font-extrabold text-slate-400">{item.time}</span>
+            </a>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -600,6 +686,7 @@ function LeftStockPanel({
   data,
   livePrice,
   watchlistItems,
+  onItemsChange,
   onSelectWatchItem,
   onTabChange,
 }: {
@@ -607,6 +694,7 @@ function LeftStockPanel({
   data: TradingWorkspaceData;
   livePrice: PriceData | null;
   watchlistItems: WatchItem[];
+  onItemsChange: (items: WatchItem[], selectedSymbol?: string) => void;
   onSelectWatchItem: (symbol: string) => void;
   onTabChange: (tab: LeftInfoTab) => void;
 }) {
@@ -631,7 +719,13 @@ function LeftStockPanel({
 
       <div className="min-h-0 flex-1">
         {activeTab === "관심종목" && (
-          <WatchlistPanel activeStock={data.stock} activeStockId={data.stock.id} items={watchlistItems} onSelect={onSelectWatchItem} />
+          <WatchlistPanel
+            activeStock={data.stock}
+            activeStockId={data.stock.id}
+            items={watchlistItems}
+            onItemsChange={onItemsChange}
+            onSelect={onSelectWatchItem}
+          />
         )}
         {activeTab === "현재가" && <CurrentPricePanel livePrice={livePrice} stock={data.stock} />}
       </div>
@@ -643,64 +737,368 @@ function WatchlistPanel({
   activeStock,
   activeStockId,
   items,
+  onItemsChange,
   onSelect,
 }: {
   activeStock: TradingWorkspaceData["stock"];
   activeStockId: string;
   items: WatchItem[];
+  onItemsChange: (items: WatchItem[], selectedSymbol?: string) => void;
   onSelect: (symbol: string) => void;
 }) {
-  if (items.length === 0) {
-    return (
-      <div className="flex h-full min-h-[260px] items-center justify-center p-4 text-center text-xs font-bold text-slate-500">
-        등록된 관심종목이 없습니다.
-      </div>
-    );
-  }
+  const [searchText, setSearchText] = useState("");
+  const [isAutocompleteOpen, setIsAutocompleteOpen] = useState(false);
+  const [activeCandidateIndex, setActiveCandidateIndex] = useState(0);
+  const [masterCandidates, setMasterCandidates] = useState<WatchlistCandidate[]>([]);
+  const [isCandidateLoading, setIsCandidateLoading] = useState(false);
+  const [inlineEdit, setInlineEdit] = useState<{ index: number; name: string } | null>(null);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const normalizedSearchText = searchText.trim();
+  const candidateItems = useMemo(
+    () => getWatchlistCandidateMatches(normalizedSearchText, items, masterCandidates),
+    [items, masterCandidates, normalizedSearchText]
+  );
+  const canSubmitDraft = normalizedSearchText.length > 0 && (candidateItems.length > 0 || isLikelyWatchSymbol(normalizedSearchText));
+  const isShowingCandidates = isAutocompleteOpen && candidateItems.length > 0;
+
+  useEffect(() => {
+    if (!normalizedSearchText) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setIsCandidateLoading(true);
+      searchSymbols(normalizedSearchText, 30)
+        .then((response) => {
+          if (cancelled) return;
+          setMasterCandidates(response.items.map(symbolToWatchCandidate));
+        })
+        .catch(() => {
+          if (!cancelled) setMasterCandidates([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIsCandidateLoading(false);
+        });
+    }, 140);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [normalizedSearchText]);
+
+  const resetDraft = () => {
+    setSearchText("");
+    setActiveCandidateIndex(0);
+    setIsAutocompleteOpen(false);
+    setMasterCandidates([]);
+    setIsCandidateLoading(false);
+  };
+
+  const addWatchCandidate = (candidate: WatchlistCandidate) => {
+    const templateItem = items.find((item) => item.symbol === candidate.symbol);
+    const nextItem = createEditableWatchItem({
+      exchange: candidate.exchange || templateItem?.exchange || inferWatchExchange(candidate.symbol),
+      name: candidate.name,
+      previousItem: templateItem,
+      symbol: candidate.symbol,
+    });
+
+    onItemsChange([nextItem, ...items]);
+    window.requestAnimationFrame(() => onSelect(candidate.symbol));
+    resetDraft();
+  };
+
+  const handleSubmitDraft = () => {
+    if (!canSubmitDraft) return;
+
+    const candidate = candidateItems[Math.min(activeCandidateIndex, candidateItems.length - 1)] ?? createCandidateFromFreeText(normalizedSearchText);
+    addWatchCandidate(candidate);
+  };
+
+  const startInlineEdit = (index: number, item: WatchItem) => {
+    setInlineEdit({ index, name: item.name });
+  };
+
+  const commitInlineEdit = () => {
+    if (!inlineEdit) return;
+
+    const nextName = inlineEdit.name.trim();
+    if (!nextName) {
+      setInlineEdit(null);
+      return;
+    }
+
+    const targetItem = items[inlineEdit.index];
+    if (!targetItem || targetItem.name === nextName) {
+      setInlineEdit(null);
+      return;
+    }
+
+    onItemsChange(items.map((item, index) => (index === inlineEdit.index ? { ...item, name: nextName } : item)));
+    setInlineEdit(null);
+  };
+
+  const handleDeleteItem = (targetIndex: number) => {
+    const nextItems = items.filter((_, index) => index !== targetIndex);
+    onItemsChange(nextItems);
+    if (inlineEdit?.index === targetIndex) setInlineEdit(null);
+  };
+
+  const handleDragStart = (event: DragEvent<HTMLDivElement>, sourceIndex: number) => {
+    setDraggedIndex(sourceIndex);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(sourceIndex));
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>, targetIndex: number) => {
+    event.preventDefault();
+    const sourceIndex = draggedIndex ?? Number(event.dataTransfer.getData("text/plain"));
+    setDraggedIndex(null);
+    if (!Number.isInteger(sourceIndex) || sourceIndex === targetIndex) return;
+    onItemsChange(moveWatchItem(items, sourceIndex, targetIndex));
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col p-2">
-      <div className="grid flex-none grid-cols-[minmax(128px,1.35fr)_78px_64px_64px] rounded-t-md bg-[#f8fafc] px-2 py-1.5 text-[11px] font-extrabold text-slate-500">
-        <span>종목명</span>
+      <div className="grid flex-none grid-cols-[minmax(0,1fr)_34px_34px] gap-1 rounded-lg border border-slate-200 bg-[#f8fafc] p-2">
+        <div className="relative min-w-0">
+          <input
+            value={searchText}
+            onBlur={() => window.setTimeout(() => setIsAutocompleteOpen(false), 120)}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setSearchText(nextValue);
+              setActiveCandidateIndex(0);
+              setIsAutocompleteOpen(true);
+              if (!nextValue.trim()) {
+                setMasterCandidates([]);
+                setIsCandidateLoading(false);
+              }
+            }}
+            onFocus={() => setIsAutocompleteOpen(true)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown" && candidateItems.length > 0) {
+                event.preventDefault();
+                setActiveCandidateIndex((current) => Math.min(current + 1, candidateItems.length - 1));
+              }
+              if (event.key === "ArrowUp" && candidateItems.length > 0) {
+                event.preventDefault();
+                setActiveCandidateIndex((current) => Math.max(current - 1, 0));
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                handleSubmitDraft();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setIsAutocompleteOpen(false);
+              }
+            }}
+            className="h-8 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-xs font-bold text-[#071832] outline-none transition focus:border-[#1d4ed8]"
+            placeholder="종목명 또는 코드"
+            aria-label="관심종목 검색"
+          />
+          {isShowingCandidates && (
+            <div
+              role="listbox"
+              className="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+              aria-label="관심종목 자동완성"
+            >
+              {candidateItems.map((candidate, index) => {
+                const isActiveCandidate = index === activeCandidateIndex;
+                return (
+                  <button
+                    key={`${candidate.symbol}-${candidate.exchange}-${index}`}
+                    type="button"
+                    role="option"
+                    aria-selected={isActiveCandidate}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      addWatchCandidate(candidate);
+                    }}
+                    onMouseEnter={() => setActiveCandidateIndex(index)}
+                    className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-2.5 py-2 text-left text-xs transition ${
+                      isActiveCandidate ? "bg-blue-50" : "hover:bg-[#fff8e1]"
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-black text-[#071832]">{candidate.name}</span>
+                      <span className="mt-0.5 block truncate font-mono text-[10px] font-bold text-slate-500">{candidate.symbol}</span>
+                    </span>
+                    <span className="rounded-md bg-[#fff8e1] px-1.5 py-0.5 text-[10px] font-extrabold text-[#8a6400]">
+                      추가
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {isAutocompleteOpen && isCandidateLoading && candidateItems.length === 0 && (
+            <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500 shadow-lg">
+              검색 중
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleSubmitDraft}
+          disabled={!canSubmitDraft}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#1d4ed8] bg-[#1d4ed8] text-white transition hover:bg-[#1742b3] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-400 focus-ring"
+          title="추가"
+          aria-label="관심종목 추가"
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={resetDraft}
+          disabled={!searchText}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition hover:bg-white hover:text-[#071832] disabled:cursor-not-allowed disabled:text-slate-300 focus-ring"
+          title="초기화"
+          aria-label="관심종목 입력 초기화"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="mt-2 grid flex-none grid-cols-[20px_minmax(82px,1fr)_58px_44px_48px_44px] rounded-t-md bg-[#f8fafc] px-1.5 py-1.5 text-[10px] font-extrabold text-slate-500">
+        <span aria-hidden="true" />
+        <span>종목</span>
         <span className="text-right">현재가</span>
         <span className="text-right">대비</span>
         <span className="text-right">등락률</span>
+        <span className="text-right">관리</span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {items.map((item) => {
-          const isActive = activeStockId === item.symbol;
-          const market = isActive
-            ? {
-                price: activeStock.price,
-                change: activeStock.change,
-                changeRate: activeStock.changeRate,
-                tone: activeStock.tone,
-              }
-            : getWatchItemMarket(item);
+        {items.length === 0 ? (
+          <div className="flex min-h-[170px] items-center justify-center rounded-b-md border border-t-0 border-slate-100 p-4 text-center text-xs font-bold text-slate-500">
+            관심종목을 추가해 주세요.
+          </div>
+        ) : (
+          items.map((item, index) => {
+            const isActive = activeStockId === item.symbol;
+            const isDragging = draggedIndex === index;
+            const market = isActive
+              ? {
+                  price: activeStock.price,
+                  change: activeStock.change,
+                  changeRate: activeStock.changeRate,
+                  tone: activeStock.tone,
+                }
+              : getWatchItemMarket(item);
 
-          return (
-            <button
-              key={item.symbol}
-              type="button"
-              onClick={() => onSelect(item.symbol)}
-              className={`grid w-full grid-cols-[minmax(128px,1.35fr)_78px_64px_64px] items-center gap-1 border-b border-slate-100 px-2 py-2 text-left text-xs transition focus-ring ${
-                isActive ? "bg-blue-50" : "hover:bg-[#fff8e1]"
-              }`}
-              aria-label={`${item.name} 현재 종목으로 보기`}
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <WatchItemLogo item={item} />
-                <span className="min-w-0">
-                  <span className="block truncate font-black text-[#071832]">{item.name}</span>
-                  <span className="mt-0.5 block font-mono text-[10px] font-bold text-slate-500">{item.symbol}</span>
+            return (
+              <div
+                key={`${item.symbol}-${index}`}
+                role="button"
+                tabIndex={0}
+                draggable
+                onDragStart={(event) => handleDragStart(event, index)}
+                onDragEnd={() => setDraggedIndex(null)}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => handleDrop(event, index)}
+                onClick={() => onSelect(item.symbol)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelect(item.symbol);
+                  }
+                }}
+                className={`grid w-full cursor-pointer grid-cols-[20px_minmax(82px,1fr)_58px_44px_48px_44px] items-center gap-1 border-b border-slate-100 px-1.5 py-2 text-left text-[11px] transition focus-ring ${
+                  isActive ? "bg-blue-50" : "hover:bg-[#fff8e1]"
+                } ${isDragging ? "opacity-45" : ""}`}
+                aria-label={`${item.name} 주문창으로 보기`}
+              >
+                <button
+                  type="button"
+                  onClick={(event) => event.stopPropagation()}
+                  className="inline-flex h-7 w-5 cursor-grab items-center justify-center rounded text-slate-400 transition hover:bg-white hover:text-[#071832] focus-ring"
+                  title="드래그로 순서 변경"
+                  aria-label={`${item.name} 순서 변경`}
+                >
+                  <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <WatchItemLogo item={item} />
+                  <span className="min-w-0">
+                    {inlineEdit?.index === index ? (
+                      <input
+                        autoFocus
+                        value={inlineEdit.name}
+                        onBlur={commitInlineEdit}
+                        onChange={(event) => setInlineEdit((current) => (current ? { ...current, name: event.target.value } : current))}
+                        onClick={(event) => event.stopPropagation()}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            event.currentTarget.blur();
+                          }
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setInlineEdit(null);
+                          }
+                        }}
+                        className="h-7 w-full min-w-0 rounded-md border border-[#1d4ed8] bg-white px-2 text-xs font-black text-[#071832] outline-none"
+                        aria-label={`${item.name} ${index + 1} 이름 수정`}
+                      />
+                    ) : (
+                      <span
+                        className="block truncate font-black text-[#071832]"
+                        onDoubleClick={(event) => {
+                          event.stopPropagation();
+                          startInlineEdit(index, item);
+                        }}
+                        title="더블클릭하여 이름 수정"
+                      >
+                        {item.name}
+                      </span>
+                    )}
+                    <span className="mt-0.5 block truncate font-mono text-[10px] font-bold text-slate-500">
+                      {item.symbol}
+                    </span>
+                  </span>
                 </span>
-              </span>
-              <span className="text-right font-black tabular-nums text-[#071832]">{market.price}</span>
-              <span className={`text-right font-extrabold tabular-nums ${toneTextClass(market.tone)}`}>{market.change}</span>
-              <span className={`text-right font-extrabold tabular-nums ${toneTextClass(market.tone)}`}>{market.changeRate}</span>
-            </button>
-          );
-        })}
+                <span className="text-right font-black tabular-nums text-[#071832]">{market.price}</span>
+                <span className={`text-right font-extrabold tabular-nums ${toneTextClass(market.tone)}`}>{market.change}</span>
+                <span className={`text-right font-extrabold tabular-nums ${toneTextClass(market.tone)}`}>{market.changeRate}</span>
+                <span className="flex items-center justify-end gap-0.5">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      startInlineEdit(index, item);
+                    }}
+                    className={`inline-flex h-7 w-5 items-center justify-center rounded transition focus-ring ${
+                      inlineEdit?.index === index ? "bg-[#1d4ed8] text-white" : "text-slate-500 hover:bg-white hover:text-[#071832]"
+                    }`}
+                    title="수정"
+                    aria-label={`${item.name} ${index + 1} 수정`}
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleDeleteItem(index);
+                    }}
+                    className="inline-flex h-7 w-5 items-center justify-center rounded text-slate-400 transition hover:bg-white hover:text-red-500 focus-ring"
+                    title="삭제"
+                    aria-label={`${item.name} ${index + 1} 삭제`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </span>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -1311,12 +1709,12 @@ function ChartPanel({
   onPeriodChange: (period: string) => void;
 }) {
   const livePrice = toNumber(stock.price);
-  const hasResolvedQuote = hasResolvedQuoteSource(stock.source);
-  const displayPrice = hasResolvedQuote ? stock.price : "0";
-  const displayChange = hasResolvedQuote ? `${stock.change} (${stock.changeRate})` : "0 (0%)";
+  const hasDisplayPrice = Number.isFinite(livePrice) && livePrice > 0;
+  const displayPrice = stock.price;
+  const displayChange = `${stock.change} (${stock.changeRate})`;
   const periodCandles = useMemo(
-    () => buildDisplayCandles(candles, period, hasResolvedQuote ? livePrice : 0),
-    [candles, hasResolvedQuote, livePrice, period]
+    () => buildDisplayCandles(candles, period, hasDisplayPrice ? livePrice : 0),
+    [candles, hasDisplayPrice, livePrice, period]
   );
 
   return (
@@ -1346,7 +1744,7 @@ function ChartPanel({
       </div>
 
       <div className="px-3 py-1.5 text-xs font-bold text-[#071832]">
-        {stock.name} · {period} · KRX
+        {stock.name} · {period} · {getExchangeDisplayLabel(stock)}
         <span className="ml-3 text-xs text-blue-600">시 {displayPrice}</span>
         <span className="ml-2 text-xs text-blue-600">고 {displayPrice}</span>
         <span className="ml-2 text-xs text-blue-600">저 {displayPrice}</span>
@@ -1844,11 +2242,48 @@ function profitLossMemo(row: ProfitLossSummary) {
 }
 
 function isKisRealtimeSupported(stock: TradingWorkspaceData["stock"]) {
-  return stock.exchange === "KRX" && /^\d{6}$/.test(stock.code);
+  return isDomesticMarketStock(stock);
 }
 
 function isKbMarketDataSupported(stock: TradingWorkspaceData["stock"]) {
   return isKisRealtimeSupported(stock) || /^[A-Z][A-Z0-9.-]{0,11}$/.test(stock.code);
+}
+
+function getMarketDataExchange(stock: TradingWorkspaceData["stock"]) {
+  return isDomesticMarketStock(stock) ? "NXT" : stock.exchange;
+}
+
+function getMarketDataKey(stock: TradingWorkspaceData["stock"]) {
+  return `${getMarketDataExchange(stock) || "-"}:${stock.code}`;
+}
+
+function isPriceDataForStock(price: PriceData | null, stock: TradingWorkspaceData["stock"]) {
+  if (!price) return false;
+  const stockCode = normalizeWatchSymbol(stock.code);
+  return normalizeWatchSymbol(price.stock_code ?? stock.code) === stockCode;
+}
+
+function isOrderbookDataForStock(orderbook: OrderbookData | null, stock: TradingWorkspaceData["stock"]) {
+  if (!orderbook) return false;
+  return normalizeWatchSymbol(orderbook.stock_code) === normalizeWatchSymbol(stock.code);
+}
+
+function getInitialOrderPrice(stock: TradingWorkspaceData["stock"], marketDataKey = getMarketDataKey(stock)) {
+  const cachedQuote = tradingPriceCache.get(marketDataKey);
+  if (cachedQuote && Number.isFinite(cachedQuote.price) && cachedQuote.price > 0) {
+    return formatLivePrice(cachedQuote.price, cachedQuote.currency);
+  }
+
+  return stock.price;
+}
+
+function isDomesticMarketStock(stock: TradingWorkspaceData["stock"]) {
+  return /^\d{6}$/.test(stock.code) && isDomesticExchangeLabel(stock.exchange);
+}
+
+function isDomesticExchangeLabel(exchange: string | null | undefined) {
+  const normalized = String(exchange || "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+  return !normalized || normalized === "KR" || normalized === "KOR" || normalized.includes("KRX") || normalized.includes("KOS") || normalized.includes("NXT");
 }
 
 function applyQuoteToWatchItem(item: WatchItem, quotes: Record<string, Parameters<typeof formatSharedQuoteDisplay>[0]>): WatchItem {
@@ -1859,6 +2294,153 @@ function applyQuoteToWatchItem(item: WatchItem, quotes: Record<string, Parameter
     changeRate: quote.changeRate,
     volumeAmount: quote.tradingValue,
   };
+}
+
+function normalizeWatchSymbol(value: string) {
+  const normalized = value.trim().toUpperCase();
+  if (/^\d{1,6}$/.test(normalized)) return normalized.padStart(6, "0");
+  return normalized;
+}
+
+function isLikelyWatchSymbol(value: string) {
+  const normalized = value.trim().toUpperCase();
+  return /^\d{1,6}$/.test(normalized) || /^[A-Z][A-Z0-9.-]{0,11}$/.test(normalized);
+}
+
+function getWatchlistCandidateMatches(query: string, items: WatchItem[], masterCandidates: WatchlistCandidate[]): WatchlistCandidate[] {
+  const normalizedQuery = query.trim().toUpperCase();
+  if (!normalizedQuery) return [];
+
+  const aliasesBySymbol = new Map<string, string[]>();
+  items.forEach((item) => {
+    aliasesBySymbol.set(item.symbol, [...(aliasesBySymbol.get(item.symbol) ?? []), item.name]);
+  });
+
+  const candidates = new Map<string, WatchlistCandidate & { aliases: string[] }>();
+  const addCandidate = (candidate: WatchlistCandidate, aliases: string[] = []) => {
+    const key = `${candidate.symbol}-${candidate.exchange || inferWatchExchange(candidate.symbol)}`;
+    if (candidates.has(key)) return;
+    candidates.set(key, {
+      ...candidate,
+      exchange: candidate.exchange || inferWatchExchange(candidate.symbol),
+      aliases,
+    });
+  };
+
+  masterCandidates.forEach((candidate) => {
+    addCandidate(candidate, aliasesBySymbol.get(candidate.symbol) ?? []);
+  });
+
+  Object.values(tradingWorkspaceByStockId).forEach(({ stock }) => {
+    addCandidate(
+      {
+        exchange: stock.exchange || inferWatchExchange(stock.code),
+        name: aliasesBySymbol.get(stock.code)?.[0] || stock.name,
+        symbol: stock.code,
+      },
+      [stock.name, ...(aliasesBySymbol.get(stock.code) ?? [])]
+    );
+  });
+
+  items.forEach((item) => {
+    addCandidate(
+      {
+        exchange: item.exchange || inferWatchExchange(item.symbol),
+        name: item.name,
+        symbol: item.symbol,
+      },
+      aliasesBySymbol.get(item.symbol) ?? []
+    );
+  });
+
+  return Array.from(candidates.values())
+    .filter((candidate) => {
+      const haystack = `${candidate.symbol} ${candidate.name} ${candidate.aliases.join(" ")} ${candidate.exchange}`.toUpperCase();
+      return haystack.includes(normalizedQuery);
+    })
+    .sort((left, right) => scoreWatchCandidate(right, normalizedQuery) - scoreWatchCandidate(left, normalizedQuery))
+    .slice(0, 8)
+    .map((candidate) => ({
+      exchange: candidate.exchange,
+      name: candidate.name,
+      symbol: candidate.symbol,
+    }));
+}
+
+function symbolToWatchCandidate(symbol: MasterSymbol): WatchlistCandidate {
+  return {
+    exchange: symbol.exchange_name || symbol.exchange.toUpperCase(),
+    name: symbol.name,
+    symbol: symbol.code,
+  };
+}
+
+function scoreWatchCandidate(candidate: WatchlistCandidate, query: string) {
+  const symbol = candidate.symbol.toUpperCase();
+  const name = candidate.name.toUpperCase();
+  if (symbol === normalizeWatchSymbol(query) || name === query) return 100;
+  if (symbol.startsWith(query)) return 80;
+  if (name.startsWith(query)) return 70;
+  if (symbol.includes(query)) return 50;
+  if (name.includes(query)) return 40;
+  return 0;
+}
+
+function createCandidateFromFreeText(value: string): WatchlistCandidate {
+  const symbol = normalizeWatchSymbol(value);
+  const workspaceStock = tradingWorkspaceByStockId[symbol]?.stock;
+
+  return {
+    exchange: workspaceStock?.exchange || inferWatchExchange(symbol),
+    name: workspaceStock?.name || symbol,
+    symbol,
+  };
+}
+
+function inferWatchExchange(symbol: string) {
+  return /^\d{6}$/.test(symbol) ? "NXT" : "NASDAQ";
+}
+
+function createEditableWatchItem({
+  exchange,
+  name,
+  previousItem,
+  symbol,
+}: {
+  exchange: string;
+  name: string;
+  previousItem?: WatchItem;
+  symbol: string;
+}): WatchItem {
+  const normalizedExchange = exchange || inferWatchExchange(symbol);
+  const isOverseas = normalizedExchange === "NASDAQ" || normalizedExchange === "NYSE" || /^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol);
+  const market = isOverseas ? "overseas" : "domestic";
+
+  return {
+    symbol,
+    name,
+    market,
+    marketLabel: market === "domestic" ? "국내" : "해외",
+    exchange: normalizedExchange,
+    price: previousItem?.price ?? "0",
+    changeRate: previousItem?.changeRate ?? "0%",
+    volumeAmount: previousItem?.volumeAmount ?? "0",
+    aiComment: previousItem?.aiComment ?? "주문창에서 시세와 뉴스를 확인하세요.",
+    signal: previousItem?.signal ?? "관심",
+    targetPrice: previousItem?.targetPrice ?? "-",
+    stopLossPrice: previousItem?.stopLossPrice ?? "-",
+    favorite: previousItem?.favorite ?? true,
+  };
+}
+
+function moveWatchItem(items: WatchItem[], sourceIndex: number, targetIndex: number) {
+  if (sourceIndex < 0 || targetIndex < 0) return items;
+
+  const nextItems = [...items];
+  const [sourceItem] = nextItems.splice(sourceIndex, 1);
+  const adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+  nextItems.splice(Math.min(Math.max(adjustedTargetIndex, 0), nextItems.length), 0, sourceItem);
+  return nextItems;
 }
 
 function mergePriceData(current: PriceData | null, next: Partial<PriceData>): PriceData {
@@ -1884,7 +2466,7 @@ function mergePriceData(current: PriceData | null, next: Partial<PriceData>): Pr
 }
 
 function mergeLiveStock(stock: TradingWorkspaceData["stock"], livePrice: PriceData | null): TradingWorkspaceData["stock"] {
-  if (!livePrice || !Number.isFinite(livePrice.price) || livePrice.price <= 0) return createPendingQuoteStock(stock);
+  if (!livePrice || !Number.isFinite(livePrice.price) || livePrice.price <= 0) return stock;
   const tone = toneFromNumber(livePrice.change_rate || livePrice.change);
   return {
     ...stock,
@@ -1895,23 +2477,6 @@ function mergeLiveStock(stock: TradingWorkspaceData["stock"], livePrice: PriceDa
     volume: livePrice.volume > 0 ? livePrice.volume.toLocaleString("ko-KR") : stock.volume,
     tradingValue: livePrice.trading_value && livePrice.trading_value > 0 ? formatTradingValue(livePrice.trading_value, livePrice.currency) : stock.tradingValue,
     source: livePrice.source?.startsWith("kb") ? "kb" : "kis",
-  };
-}
-
-function hasResolvedQuoteSource(source: TradingWorkspaceData["stock"]["source"]) {
-  return source === "kb" || source === "kis";
-}
-
-function createPendingQuoteStock(stock: TradingWorkspaceData["stock"]): TradingWorkspaceData["stock"] {
-  return {
-    ...stock,
-    price: "0",
-    change: "0",
-    changeRate: "0%",
-    tone: "neutral",
-    volume: "0",
-    tradingValue: "0",
-    source: "pending",
   };
 }
 

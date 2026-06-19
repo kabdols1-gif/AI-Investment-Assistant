@@ -55,7 +55,7 @@ async def get_kb_current_price(stock_code: str, env_dv: str = "real", exchange: 
         raw = await _call_kb_b2c_tr(
             KB_DOMESTIC_CURRENT_PRICE_TR,
             {
-                "excg_clsf": "1",
+                "excg_clsf": market["domestic_exchange_class"],
                 "shrt_cd": market["stock_code"],
             },
         )
@@ -109,7 +109,7 @@ async def get_kb_executions(
         raw = await _call_kb_b2c_tr(
             KB_DOMESTIC_EXECUTIONS_TR,
             {
-                "excg_clsf": "1",
+                "excg_clsf": market["domestic_exchange_class"],
                 "is_cd": market["stock_code"],
                 "ovtm_mkt_clsf": DEFAULT_ORDERBOOK_OVERTIME_MARKET_CLASS,
                 "inq_cnt": str(safe_count),
@@ -461,13 +461,14 @@ def _format_time(value: str) -> str:
 def _resolve_market_identifier(stock_code: str, exchange: str | None = None) -> dict[str, Any]:
     code = _normalize_stock_code(stock_code)
     is_domestic = _is_domestic_stock_code(code) and not _is_overseas_exchange(exchange)
-    exchange_code = "KRX" if is_domestic else _normalize_overseas_exchange_code(exchange)
+    exchange_code = _normalize_domestic_exchange_code(exchange) if is_domestic else _normalize_overseas_exchange_code(exchange)
     return {
         "stock_code": code,
         "is_cd": code,
         "krx_cd": exchange_code,
-        "exchange": "KRX" if is_domestic else exchange_code,
+        "exchange": exchange_code,
         "is_domestic": is_domestic,
+        "domestic_exchange_class": _domestic_exchange_class(exchange_code) if is_domestic else "",
     }
 
 
@@ -479,14 +480,36 @@ def _is_overseas_exchange(exchange: str | None) -> bool:
     normalized = re.sub(r"[^0-9A-Za-z]", "", str(exchange or "")).upper()
     if not normalized:
         return False
-    return normalized not in {"KR", "KOR", "KRX", "KOSPI", "KOSDAQ", "NXT"}
+    return not _is_domestic_exchange_code(normalized)
 
 
 def _normalize_overseas_exchange_code(exchange: str | None) -> str:
     normalized = re.sub(r"[^0-9A-Za-z]", "", str(exchange or "")).upper()
-    if not normalized or normalized in {"KR", "KOR", "KRX", "KOSPI", "KOSDAQ", "NXT"}:
+    if not normalized or _is_domestic_exchange_code(normalized):
         return DEFAULT_OVERSEAS_EXCHANGE_CODE
     return OVERSEAS_EXCHANGE_CODES.get(normalized, normalized[:3])
+
+
+def _is_domestic_exchange_code(normalized_exchange: str) -> bool:
+    return normalized_exchange in {"KR", "KOR", "KRX", "KOSPI", "KOSDAQ", "NXT", "KRXNXT", "NXTKRX", "SOR", "ALL", "ATS"} or "NXT" in normalized_exchange
+
+
+def _normalize_domestic_exchange_code(exchange: str | None) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z]", "", str(exchange or "")).upper()
+    if "NXT" in normalized:
+        return "NXT"
+    if normalized in {"SOR", "ALL", "ATS"}:
+        return "ALL"
+    return "KRX"
+
+
+def _domestic_exchange_class(exchange: str | None) -> str:
+    normalized = _normalize_domestic_exchange_code(exchange)
+    if normalized == "NXT":
+        return "2"
+    if normalized == "ALL":
+        return "0"
+    return "1"
 
 
 def _market_timestamp(data: dict[str, Any]) -> str:

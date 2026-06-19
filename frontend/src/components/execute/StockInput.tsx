@@ -85,6 +85,7 @@ export function StockInput({ stocks, onChange }: StockInputProps) {
         const parsed = JSON.parse(saved) as StockWithName[];
         if (Array.isArray(parsed) && parsed.length > 0) {
           const codes = parsed.map((s) => s.code);
+          const mergedCodes = [...new Set([...stocks, ...codes])];
           const names = parsed.reduce((acc, s) => {
             // 코드와 이름이 같으면 이름 누락된 것 → 빈 문자열로 저장
             if (s.name && s.name !== s.code) {
@@ -92,11 +93,11 @@ export function StockInput({ stocks, onChange }: StockInputProps) {
             }
             return acc;
           }, {} as Record<string, string>);
-          onChange(codes);
+          onChange(mergedCodes);
           setStockNames(names);
 
           // 이름이 누락된 종목은 마스터파일에서 조회
-          const missingNameCodes = codes.filter((c) => !names[c]);
+          const missingNameCodes = mergedCodes.filter((c) => !names[c]);
           if (missingNameCodes.length > 0) {
             resolveMultipleNames(missingNameCodes).then((resolved) => {
               if (Object.keys(resolved).length > 0) {

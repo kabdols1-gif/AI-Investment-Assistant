@@ -20,6 +20,8 @@ from backend.services.openapi_runtime import load_openapi_kis_credentials
 
 KIS_QUOTE_TR_ID = "FHKST01010100"
 KIS_REALTIME_TRADE_TR_ID = "H0STCNT0"
+KIS_NXT_REALTIME_TRADE_TR_ID = "H0NXCNT0"
+KIS_UNIFIED_REALTIME_TRADE_TR_ID = "H0UNCNT0"
 KIS_REAL_REST_BASE_URL = "https://openapi.koreainvestment.com:9443"
 KIS_PAPER_REST_BASE_URL = "https://openapivts.koreainvestment.com:29443"
 KIS_REAL_WEBSOCKET_URL = "ws://ops.koreainvestment.com:21000"
@@ -445,13 +447,14 @@ async def get_kis_current_price(stock_code: str, env_dv: str = "real") -> dict[s
     return _normalize_quote_output(normalized_code, output, source="kis_rest")
 
 
-def parse_kis_realtime_trade_message(message: str) -> dict[str, Any] | None:
+def parse_kis_realtime_trade_message(message: str, allowed_tr_ids: set[str] | None = None, exchange: str | None = None) -> dict[str, Any] | None:
     text = message.strip()
     if not text or text.startswith("{"):
         return None
 
     parts = text.split("|")
-    if len(parts) < 4 or parts[1] != KIS_REALTIME_TRADE_TR_ID:
+    tr_id = parts[1] if len(parts) > 1 else ""
+    if len(parts) < 4 or tr_id not in (allowed_tr_ids or {KIS_REALTIME_TRADE_TR_ID, KIS_NXT_REALTIME_TRADE_TR_ID, KIS_UNIFIED_REALTIME_TRADE_TR_ID}):
         return None
 
     fields = "|".join(parts[3:]).split("^")
@@ -474,15 +477,17 @@ def parse_kis_realtime_trade_message(message: str) -> dict[str, Any] | None:
         "ask_price": _to_float(fields[10] if len(fields) > 10 else 0),
         "bid_price": _to_float(fields[11] if len(fields) > 11 else 0),
         "source": "kis_realtime",
+        "exchange": _realtime_exchange_label(exchange, tr_id),
+        "currency": "KRW",
     }
 
 
-async def stream_kis_realtime_price(stock_code: str, env_dv: str = "real") -> AsyncIterator[dict[str, Any]]:
-    async for parsed in stream_kis_realtime_prices([stock_code], env_dv):
+async def stream_kis_realtime_price(stock_code: str, env_dv: str = "real", exchange: str | None = None) -> AsyncIterator[dict[str, Any]]:
+    async for parsed in stream_kis_realtime_prices([stock_code], env_dv, exchange):
         yield parsed
 
 
-async def stream_kis_realtime_prices(stock_codes: list[str], env_dv: str = "real") -> AsyncIterator[dict[str, Any]]:
+async def stream_kis_realtime_prices(stock_codes: list[str], env_dv: str = "real", exchange: str | None = None) -> AsyncIterator[dict[str, Any]]:
     normalized_codes = _normalize_realtime_stock_codes(stock_codes)
     if not normalized_codes:
         return
@@ -491,14 +496,16 @@ async def stream_kis_realtime_prices(stock_codes: list[str], env_dv: str = "real
     live = approval.get("mode") == "real"
     websocket_url = _kis_websocket_url(live)
     subscribed_code_set = set(normalized_codes)
+    tr_id = _realtime_trade_tr_id(exchange)
+    allowed_tr_ids = {tr_id}
 
     async with websockets.connect(websocket_url, ping_interval=20, ping_timeout=20) as socket:
         for code in normalized_codes:
-            await socket.send(json.dumps(_realtime_subscribe_payload(approval["approval_key"], code), ensure_ascii=False))
+            await socket.send(json.dumps(_realtime_subscribe_payload(approval["approval_key"], code, tr_id=tr_id), ensure_ascii=False))
 
         async for raw_message in socket:
             message = raw_message.decode("utf-8", errors="ignore") if isinstance(raw_message, bytes) else str(raw_message)
-            parsed = parse_kis_realtime_trade_message(message)
+            parsed = parse_kis_realtime_trade_message(message, allowed_tr_ids=allowed_tr_ids, exchange=exchange)
             if parsed and parsed.get("stock_code") in subscribed_code_set:
                 yield parsed
 
@@ -519,7 +526,25 @@ def _normalize_realtime_stock_codes(stock_codes: list[str]) -> list[str]:
     return normalized
 
 
-def _realtime_subscribe_payload(approval_key: str, stock_code: str) -> dict[str, Any]:
+def _realtime_trade_tr_id(exchange: str | None = None) -> str:
+    normalized = "".join(ch for ch in str(exchange or "").upper() if ch.isalnum())
+    if "NXT" in normalized:
+        return KIS_NXT_REALTIME_TRADE_TR_ID
+    if normalized in {"ALL", "ATS", "SOR", "KRXNXT", "NXTKRX", "UNIFIED", "TOTAL"}:
+        return KIS_UNIFIED_REALTIME_TRADE_TR_ID
+    return KIS_REALTIME_TRADE_TR_ID
+
+
+def _realtime_exchange_label(exchange: str | None, tr_id: str) -> str:
+    if tr_id == KIS_NXT_REALTIME_TRADE_TR_ID:
+        return "NXT"
+    if tr_id == KIS_UNIFIED_REALTIME_TRADE_TR_ID:
+        return "KRX/NXT"
+    normalized = str(exchange or "").strip().upper()
+    return normalized or "KRX"
+
+
+def _realtime_subscribe_payload(approval_key: str, stock_code: str, tr_id: str = KIS_REALTIME_TRADE_TR_ID) -> dict[str, Any]:
     return {
         "header": {
             "approval_key": approval_key,
@@ -529,7 +554,7 @@ def _realtime_subscribe_payload(approval_key: str, stock_code: str) -> dict[str,
         },
         "body": {
             "input": {
-                "tr_id": KIS_REALTIME_TRADE_TR_ID,
+                "tr_id": tr_id,
                 "tr_key": stock_code,
             }
         },
