@@ -264,8 +264,9 @@ function hasLivePrice(quote: PriceData) {
 }
 
 function shouldIgnoreRealtimeQuote(next: PriceData, current: PriceData | null) {
-  if (!current || !hasLivePrice(current) || !hasLivePrice(next)) return false;
-  if (!isRealtimeSource(next.source) || !isKbSource(current.source)) return false;
+  if (!isRealtimeSource(next.source)) return false;
+  if (!current || !isKbSource(current.source)) return true;
+  if (!hasLivePrice(current) || !hasLivePrice(next)) return false;
   return Math.abs(next.price - current.price) / current.price > REALTIME_MAX_DEVIATION_RATE;
 }
 

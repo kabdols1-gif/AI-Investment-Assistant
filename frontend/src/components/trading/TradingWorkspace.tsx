@@ -126,7 +126,8 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     () => watchlistItems.map((item) => applyQuoteToWatchItem(item, watchlistQuotes)),
     [watchlistItems, watchlistQuotes]
   );
-  const liveStock = useMemo(() => mergeLiveStock(data.stock, currentLivePrice), [data.stock, currentLivePrice]);
+  const baseDisplayStock = useMemo(() => getInitialDisplayStock(data.stock, currentMarketDataKey), [currentMarketDataKey, data.stock]);
+  const liveStock = useMemo(() => mergeLiveStock(baseDisplayStock, currentLivePrice), [baseDisplayStock, currentLivePrice]);
   const liveData = useMemo<TradingWorkspaceData>(() => ({ ...data, stock: liveStock }), [data, liveStock]);
   const draftPrice = orderDraft.stockId === liveData.stock.id ? orderDraft.price : liveData.stock.price;
   const draftQuantity = orderDraft.stockId === liveData.stock.id ? orderDraft.quantity : "0";
@@ -2353,8 +2354,9 @@ function isOrderbookPriceOutlier(price: number, referencePrice: number) {
 }
 
 function shouldIgnoreRealtimePriceData(next: Partial<PriceData>, current: PriceData | null) {
-  if (!current || !hasLivePriceData(current) || !hasLivePriceData(next as PriceData)) return false;
-  if (!isRealtimeSource(next.source) || !isKbSource(current.source)) return false;
+  if (!isRealtimeSource(next.source)) return false;
+  if (!current || !isKbSource(current.source)) return true;
+  if (!hasLivePriceData(current) || !hasLivePriceData(next as PriceData)) return false;
   return Math.abs((next.price ?? 0) - current.price) / current.price > REALTIME_MAX_DEVIATION_RATE;
 }
 
@@ -2440,7 +2442,37 @@ function getInitialOrderPrice(stock: TradingWorkspaceData["stock"], marketDataKe
     return formatLivePrice(cachedQuote.price, cachedQuote.currency);
   }
 
+  if (shouldUsePendingMarketDataStock(stock)) {
+    return "0";
+  }
+
   return stock.price;
+}
+
+function getInitialDisplayStock(stock: TradingWorkspaceData["stock"], marketDataKey = getMarketDataKey(stock)) {
+  const cachedQuote = getPriceDataForStock(null, stock, marketDataKey);
+  if (cachedQuote && Number.isFinite(cachedQuote.price) && cachedQuote.price > 0) {
+    return mergeLiveStock(stock, cachedQuote);
+  }
+
+  return shouldUsePendingMarketDataStock(stock) ? toPendingMarketDataStock(stock) : stock;
+}
+
+function shouldUsePendingMarketDataStock(stock: TradingWorkspaceData["stock"]) {
+  return stock.source === "mock" && isKbMarketDataSupported(stock);
+}
+
+function toPendingMarketDataStock(stock: TradingWorkspaceData["stock"]): TradingWorkspaceData["stock"] {
+  return {
+    ...stock,
+    price: "0",
+    change: "0",
+    changeRate: "0%",
+    tone: "neutral",
+    volume: "0",
+    tradingValue: "0",
+    source: "pending",
+  };
 }
 
 function isDomesticMarketStock(stock: TradingWorkspaceData["stock"]) {
