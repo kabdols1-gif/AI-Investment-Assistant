@@ -41,6 +41,7 @@ import { FloatingMicButton, VoiceInputModal } from "@/components/voice";
 import { useToast } from "@/components/ui";
 import { useMarketQuotes } from "@/hooks";
 import { CONFIG_STATUS_UPDATED_EVENT, setSharedConfigStatus } from "@/hooks/useConfigStatus";
+import { SCREEN_REVISION } from "@/lib/appVersion";
 import { interpretVoice } from "@/lib/api/voice";
 import { getConfigStatus, saveKBConfig, saveLLMConfig } from "@/lib/api/config";
 import { BROKER_PROVIDER_OPTIONS, getBrokerProviderOption } from "@/lib/brokerProviders";
@@ -1030,10 +1031,11 @@ function RuntimeEnvironmentBadge({ configStatus }: { configStatus: ConfigStatus 
           ? "border-red-200 bg-red-50 text-red-700"
           : "border-emerald-200 bg-emerald-50 text-emerald-700"
       }`}
-      title={`Runtime: ${mode}${host ? ` / ${host}` : ""}`}
-      aria-label={`Current runtime environment: ${mode}`}
+      title={`Runtime: ${mode} / ${SCREEN_REVISION}${host ? ` / ${host}` : ""}`}
+      aria-label={`Current runtime environment: ${mode}, screen revision ${SCREEN_REVISION}`}
     >
       <span className="tracking-normal">{isProduction ? "PROD" : "DEV"}</span>
+      <span className="rounded border border-current/20 px-1.5 py-0.5 font-mono text-[10px] opacity-90">{SCREEN_REVISION}</span>
       {host ? <span className="hidden max-w-[170px] truncate font-mono text-[11px] opacity-80 xl:inline">{host}</span> : null}
     </div>
   );
