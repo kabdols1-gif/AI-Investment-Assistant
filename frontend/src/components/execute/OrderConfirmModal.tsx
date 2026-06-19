@@ -131,6 +131,8 @@ export function OrderConfirmModal({
                 stockCode={signal.code}
                 stockName={signal.name}
                 exchange={signal.exchange ?? priceData?.exchange}
+                currentPrice={currentPrice}
+                currency={currency}
                 onPriceSelect={handlePriceSelect}
                 realtime={true}
               />

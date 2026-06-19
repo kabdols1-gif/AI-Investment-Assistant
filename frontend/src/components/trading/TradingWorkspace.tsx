@@ -109,12 +109,10 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
   const orderbookReconnectRef = useRef<number | null>(null);
   const { quotes: watchlistQuotes } = useMarketQuotes(watchlistItems.map((item) => item.symbol));
   const currentLivePrice = useMemo(() => {
-    if (isPriceDataForStock(livePrice, data.stock)) return livePrice;
-    return tradingPriceCache.get(currentMarketDataKey) ?? null;
+    return getPriceDataForStock(livePrice, data.stock, currentMarketDataKey);
   }, [currentMarketDataKey, data.stock, livePrice]);
   const currentOrderbookData = useMemo(() => {
-    if (isOrderbookDataForStock(orderbookData, data.stock)) return orderbookData;
-    return tradingOrderbookCache.get(currentMarketDataKey) ?? null;
+    return getOrderbookDataForStock(orderbookData, data.stock, currentMarketDataKey);
   }, [currentMarketDataKey, data.stock, orderbookData]);
   const currentExecutionData = useMemo(() => {
     if (executionDataKey === currentMarketDataKey) return executionData;
@@ -164,13 +162,11 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
         if (!isActive) return;
         const snapshot = response.data;
         if (response.status === "success" && snapshot) {
-          const snapshotForStock = {
-            ...snapshot,
-            stock_code: snapshot.stock_code ?? stockCode,
-            exchange: snapshot.exchange ?? exchange,
-          };
+          const snapshotForStock = normalizeIncomingPriceData(snapshot, data.stock, exchange);
+          if (!snapshotForStock) return;
           setLivePrice((current) => {
-            const nextQuote = mergePriceData(current ?? tradingPriceCache.get(marketDataKey) ?? null, snapshotForStock);
+            const mergeBase = getPriceDataForStock(current, data.stock, marketDataKey);
+            const nextQuote = mergePriceData(mergeBase, snapshotForStock);
             tradingPriceCache.set(marketDataKey, nextQuote);
             return nextQuote;
           });
@@ -210,16 +206,19 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
             data?: Partial<PriceData>;
           };
           const nextPrice = payload.data
-            ? {
-                ...payload.data,
-                stock_code: payload.data.stock_code ?? stockCode,
-                exchange: payload.data.exchange ?? exchange,
-                source: payload.source === "kis_realtime" ? "kis" : payload.data.source,
-              }
+            ? normalizeIncomingPriceData(
+                {
+                  ...payload.data,
+                  source: payload.source === "kis_realtime" ? "kis" : payload.data.source,
+                },
+                data.stock,
+                exchange
+              )
             : null;
           if (payload.type === "price" && nextPrice) {
             setLivePrice((current) => {
-              const nextQuote = mergePriceData(current ?? tradingPriceCache.get(marketDataKey) ?? null, nextPrice);
+              const mergeBase = getPriceDataForStock(current, data.stock, marketDataKey);
+              const nextQuote = mergePriceData(mergeBase, nextPrice);
               tradingPriceCache.set(marketDataKey, nextQuote);
               return nextQuote;
             });
@@ -282,24 +281,26 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
     const stockName = data.stock.name;
 
     const applyOrderbook = (next: Partial<OrderbookData>, timestamp?: string | null) => {
+      const scopedNext = normalizeIncomingOrderbookData(next, data.stock, stockName, exchange);
+      if (!scopedNext) return;
       setOrderbookData((current) => {
-        const cached = current ?? tradingOrderbookCache.get(marketDataKey);
+        const cached = getOrderbookDataForStock(current, data.stock, marketDataKey);
         const nextOrderbook = {
-          stock_code: next.stock_code ?? cached?.stock_code ?? stockCode,
-          stock_name: next.stock_name ?? cached?.stock_name ?? stockName,
-          current_price: numberOr(next.current_price, cached?.current_price ?? 0),
-          ask_prices: next.ask_prices ?? cached?.ask_prices ?? [],
-          ask_volumes: next.ask_volumes ?? cached?.ask_volumes ?? [],
-          bid_prices: next.bid_prices ?? cached?.bid_prices ?? [],
-          bid_volumes: next.bid_volumes ?? cached?.bid_volumes ?? [],
-          total_ask_volume: numberOr(next.total_ask_volume, cached?.total_ask_volume ?? 0),
-          total_bid_volume: numberOr(next.total_bid_volume, cached?.total_bid_volume ?? 0),
-          expected_price: numberOr(next.expected_price, cached?.expected_price ?? 0),
-          expected_volume: numberOr(next.expected_volume, cached?.expected_volume ?? 0),
-          timestamp: next.timestamp ?? timestamp ?? cached?.timestamp ?? null,
-          source: next.source ?? cached?.source ?? "kb_b2c",
-          exchange: next.exchange ?? cached?.exchange ?? exchange,
-          currency: next.currency ?? cached?.currency ?? inferStockCurrency(data.stock),
+          stock_code: scopedNext.stock_code ?? cached?.stock_code ?? stockCode,
+          stock_name: scopedNext.stock_name ?? cached?.stock_name ?? stockName,
+          current_price: numberOr(scopedNext.current_price, cached?.current_price ?? 0),
+          ask_prices: scopedNext.ask_prices ?? cached?.ask_prices ?? [],
+          ask_volumes: scopedNext.ask_volumes ?? cached?.ask_volumes ?? [],
+          bid_prices: scopedNext.bid_prices ?? cached?.bid_prices ?? [],
+          bid_volumes: scopedNext.bid_volumes ?? cached?.bid_volumes ?? [],
+          total_ask_volume: numberOr(scopedNext.total_ask_volume, cached?.total_ask_volume ?? 0),
+          total_bid_volume: numberOr(scopedNext.total_bid_volume, cached?.total_bid_volume ?? 0),
+          expected_price: numberOr(scopedNext.expected_price, cached?.expected_price ?? 0),
+          expected_volume: numberOr(scopedNext.expected_volume, cached?.expected_volume ?? 0),
+          timestamp: scopedNext.timestamp ?? timestamp ?? cached?.timestamp ?? null,
+          source: scopedNext.source ?? cached?.source ?? "kb_b2c",
+          exchange: scopedNext.exchange ?? cached?.exchange ?? exchange,
+          currency: scopedNext.currency ?? cached?.currency ?? inferStockCurrency(data.stock),
         };
         tradingOrderbookCache.set(marketDataKey, nextOrderbook);
         return nextOrderbook;
@@ -310,8 +311,7 @@ export function TradingWorkspace({ data, brokerConnected, brokerOption, initialO
       const response = await getOrderbook(stockCode, "real", exchange);
       if (!isActive) return;
       if (response.status === "success" && response.data) {
-        tradingOrderbookCache.set(marketDataKey, response.data);
-        setOrderbookData(response.data);
+        applyOrderbook(response.data);
       }
     };
 
@@ -1245,7 +1245,8 @@ function OrderBookPanel({
   onCancelOrder: () => void;
 }) {
   const currency = orderbook?.currency ?? livePrice?.currency ?? inferStockCurrency(stock);
-  const rateReferencePrice = livePrice?.previous_close || orderbook?.current_price || 0;
+  const liveCurrentPrice = livePrice && livePrice.price > 0 ? livePrice.price : null;
+  const rateReferencePrice = livePrice?.previous_close || liveCurrentPrice || orderbook?.current_price || 0;
   const displayRows = padOrderbookRows(orderbook ? orderbookToRows(orderbook, rateReferencePrice) : rows.map((row) => toDisplayOrderBookRow(row, currentPrice)));
   const askRows = displayRows.slice(0, ORDERBOOK_DISPLAY_DEPTH);
   const bidRows = displayRows.slice(ORDERBOOK_DISPLAY_DEPTH, ORDERBOOK_DISPLAY_DEPTH * 2);
@@ -1259,7 +1260,7 @@ function OrderBookPanel({
   const totalAskVolume = orderbook ? formatInteger(totalAskNumber) : "0";
   const totalBidVolume = orderbook ? formatInteger(totalBidNumber) : "0";
   const netVolume = totalBidNumber - totalAskNumber;
-  const centerPriceNumber = orderbook?.current_price ?? toNumber(currentPrice);
+  const centerPriceNumber = liveCurrentPrice ?? orderbook?.current_price ?? toNumber(currentPrice);
   const centerPrice = centerPriceNumber > 0 ? formatLadderPrice(centerPriceNumber, currency) : "0";
   const quoteStats = buildOrderbookStats(livePrice, stock, currency);
 
@@ -2257,19 +2258,68 @@ function getMarketDataKey(stock: TradingWorkspaceData["stock"]) {
   return `${getMarketDataExchange(stock) || "-"}:${stock.code}`;
 }
 
+function getPriceDataForStock(price: PriceData | null, stock: TradingWorkspaceData["stock"], marketDataKey: string) {
+  if (isPriceDataForStock(price, stock)) return price;
+  const cachedQuote = tradingPriceCache.get(marketDataKey) ?? null;
+  return isPriceDataForStock(cachedQuote, stock) ? cachedQuote : null;
+}
+
+function getOrderbookDataForStock(orderbook: OrderbookData | null, stock: TradingWorkspaceData["stock"], marketDataKey: string) {
+  if (isOrderbookDataForStock(orderbook, stock)) return orderbook;
+  const cachedOrderbook = tradingOrderbookCache.get(marketDataKey) ?? null;
+  return isOrderbookDataForStock(cachedOrderbook, stock) ? cachedOrderbook : null;
+}
+
 function isPriceDataForStock(price: PriceData | null, stock: TradingWorkspaceData["stock"]) {
-  if (!price) return false;
-  const stockCode = normalizeWatchSymbol(stock.code);
-  return normalizeWatchSymbol(price.stock_code ?? stock.code) === stockCode;
+  if (!price?.stock_code) return false;
+  return isSameStockCode(price.stock_code, stock.code);
 }
 
 function isOrderbookDataForStock(orderbook: OrderbookData | null, stock: TradingWorkspaceData["stock"]) {
   if (!orderbook) return false;
-  return normalizeWatchSymbol(orderbook.stock_code) === normalizeWatchSymbol(stock.code);
+  return isSameStockCode(orderbook.stock_code, stock.code);
+}
+
+function normalizeIncomingPriceData(
+  next: Partial<PriceData>,
+  stock: TradingWorkspaceData["stock"],
+  exchange?: string | null
+): Partial<PriceData> | null {
+  if (hasMismatchedStockCode(next.stock_code, stock.code)) return null;
+  return {
+    ...next,
+    stock_code: normalizeWatchSymbol(stock.code),
+    exchange: next.exchange ?? exchange ?? getMarketDataExchange(stock),
+    currency: next.currency ?? inferStockCurrency(stock),
+  };
+}
+
+function normalizeIncomingOrderbookData(
+  next: Partial<OrderbookData>,
+  stock: TradingWorkspaceData["stock"],
+  stockName: string,
+  exchange?: string | null
+): (Partial<OrderbookData> & Pick<OrderbookData, "stock_code" | "stock_name">) | null {
+  if (hasMismatchedStockCode(next.stock_code, stock.code)) return null;
+  return {
+    ...next,
+    stock_code: normalizeWatchSymbol(stock.code),
+    stock_name: next.stock_name ?? stockName,
+    exchange: next.exchange ?? exchange ?? getMarketDataExchange(stock),
+    currency: next.currency ?? inferStockCurrency(stock),
+  };
+}
+
+function hasMismatchedStockCode(incomingCode: string | null | undefined, expectedCode: string) {
+  return Boolean(incomingCode) && !isSameStockCode(incomingCode, expectedCode);
+}
+
+function isSameStockCode(left: string | null | undefined, right: string | null | undefined) {
+  return normalizeWatchSymbol(left || "") === normalizeWatchSymbol(right || "");
 }
 
 function getInitialOrderPrice(stock: TradingWorkspaceData["stock"], marketDataKey = getMarketDataKey(stock)) {
-  const cachedQuote = tradingPriceCache.get(marketDataKey);
+  const cachedQuote = getPriceDataForStock(null, stock, marketDataKey);
   if (cachedQuote && Number.isFinite(cachedQuote.price) && cachedQuote.price > 0) {
     return formatLivePrice(cachedQuote.price, cachedQuote.currency);
   }

@@ -1,3 +1,6 @@
+import asyncio
+
+from backend.services import kb_market_service
 from backend.services.kb_market_service import (
     _normalize_executions_response,
     _normalize_orderbook_response,
@@ -64,6 +67,33 @@ def test_kb_b2c_orderbook_is_normalized():
     assert normalized["total_bid_volume"] == 11000
     assert normalized["expected_price"] == 65050
     assert normalized["expected_volume"] == 100
+
+
+def test_kb_b2c_orderbook_passes_domestic_exchange_class(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_call(transaction_code: str, data_body: dict[str, object]) -> dict[str, object]:
+        captured["transaction_code"] = transaction_code
+        captured["data_body"] = data_body
+        return {
+            "dataBody": {
+                "now_prc": "65,000",
+                "s1_aprc": "65,100",
+                "b1_aprc": "64,900",
+            }
+        }
+
+    monkeypatch.setattr(kb_market_service, "_call_kb_b2c_tr", fake_call)
+
+    normalized = asyncio.run(kb_market_service.get_kb_orderbook("005930", exchange="NXT"))
+
+    assert normalized is not None
+    assert captured["transaction_code"] == kb_market_service.KB_DOMESTIC_ORDERBOOK_TR
+    assert captured["data_body"] == {
+        "excg_clsf": "2",
+        "is_cd": "005930",
+        "ovtm_mkt_clsf": kb_market_service.DEFAULT_ORDERBOOK_OVERTIME_MARKET_CLASS,
+    }
 
 
 def test_kb_b2c_executions_are_normalized():

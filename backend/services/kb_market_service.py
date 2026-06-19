@@ -79,6 +79,7 @@ async def get_kb_orderbook(stock_code: str, env_dv: str = "real", exchange: str 
         raw = await _call_kb_b2c_tr(
             KB_DOMESTIC_ORDERBOOK_TR,
             {
+                "excg_clsf": market["domestic_exchange_class"],
                 "is_cd": market["stock_code"],
                 "ovtm_mkt_clsf": DEFAULT_ORDERBOOK_OVERTIME_MARKET_CLASS,
             },

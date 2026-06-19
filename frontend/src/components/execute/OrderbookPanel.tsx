@@ -12,6 +12,8 @@ interface OrderbookPanelProps {
   stockCode: string;
   stockName?: string;
   exchange?: string | null;
+  currentPrice?: number | null;
+  currency?: string | null;
   onPriceSelect?: (price: number) => void;
   className?: string;
   /** Enable WebSocket real-time updates */
@@ -22,6 +24,8 @@ export function OrderbookPanel({
   stockCode,
   stockName,
   exchange,
+  currentPrice,
+  currency,
   onPriceSelect,
   className,
   realtime = true,
@@ -48,7 +52,10 @@ export function OrderbookPanel({
       if (!isMountedRef.current) return;
 
       if (response.status === "success" && response.data) {
-        setOrderbook(response.data);
+        const scopedOrderbook = normalizeOrderbookForStock(response.data, stockCode, stockName, exchange, currency);
+        if (scopedOrderbook) {
+          setOrderbook(scopedOrderbook);
+        }
       } else {
         setError(response.message || "호가 조회 실패");
       }
@@ -60,7 +67,7 @@ export function OrderbookPanel({
         setIsLoading(false);
       }
     }
-  }, [stockCode, exchange]);
+  }, [stockCode, stockName, exchange, currency]);
 
   // WebSocket connection for real-time updates
   const connectWebSocket = useCallback(() => {
@@ -91,12 +98,26 @@ export function OrderbookPanel({
         try {
           const data = JSON.parse(event.data);
           if (data.type === "orderbook" && data.data) {
+            const scopedOrderbook = normalizeOrderbookForStock(
+              {
+                ...data.data,
+                stock_code: data.data.stock_code ?? data.stock_code ?? stockCode,
+                stock_name: data.data.stock_name ?? stockName,
+                exchange: data.data.exchange ?? data.exchange ?? exchange,
+                currency: data.data.currency ?? currency,
+              },
+              stockCode,
+              stockName,
+              exchange,
+              currency
+            );
+            if (!scopedOrderbook) return;
             setOrderbook((prev) => ({
-              ...prev,
-              ...data.data,
+              ...(isOrderbookForStock(prev, stockCode) ? prev : null),
+              ...scopedOrderbook,
               // WS가 current_price를 보내지 않으면 기존 값 유지
-              current_price: data.data.current_price ?? prev?.current_price,
-            } as typeof prev));
+              current_price: scopedOrderbook.current_price ?? prev?.current_price ?? 0,
+            }));
           }
         } catch {
           // Ignore parse errors
@@ -129,7 +150,7 @@ export function OrderbookPanel({
       setIsConnected(false);
       fetchOrderbook();
     }
-  }, [stockCode, exchange, realtime, fetchOrderbook]);
+  }, [stockCode, stockName, exchange, currency, realtime, fetchOrderbook]);
 
   // Initial fetch and WebSocket setup
   useEffect(() => {
@@ -161,15 +182,18 @@ export function OrderbookPanel({
     onPriceSelect?.(price);
   };
 
-  const askPrices = (orderbook?.ask_prices || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
-  const askVolumes = (orderbook?.ask_volumes || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
-  const bidPrices = (orderbook?.bid_prices || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
-  const bidVolumes = (orderbook?.bid_volumes || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
+  const currentOrderbook = isOrderbookForStock(orderbook, stockCode) ? orderbook : null;
+  const displayCurrency = currentOrderbook?.currency ?? currency;
+  const displayCurrentPrice = typeof currentPrice === "number" && currentPrice > 0 ? currentPrice : currentOrderbook?.current_price ?? 0;
+  const askPrices = (currentOrderbook?.ask_prices || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
+  const askVolumes = (currentOrderbook?.ask_volumes || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
+  const bidPrices = (currentOrderbook?.bid_prices || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
+  const bidVolumes = (currentOrderbook?.bid_volumes || []).slice(0, ORDERBOOK_DISPLAY_DEPTH);
 
   // Calculate max volume for bar sizing
   const maxVolume = Math.max(...askVolumes, ...bidVolumes, 1);
 
-  if (isLoading && !orderbook) {
+  if (isLoading && !currentOrderbook) {
     return (
       <div className={cn("flex items-center justify-center py-8", className)}>
         <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -177,7 +201,7 @@ export function OrderbookPanel({
     );
   }
 
-  if (error && !orderbook) {
+  if (error && !currentOrderbook) {
     return (
       <div className={cn("text-center py-8", className)}>
         <p className="text-sm text-red-500">{error}</p>
@@ -191,7 +215,7 @@ export function OrderbookPanel({
     );
   }
 
-  if (!orderbook) return null;
+  if (!currentOrderbook) return null;
 
   return (
     <div className={cn("", className)}>
@@ -261,7 +285,7 @@ export function OrderbookPanel({
                     {volume?.toLocaleString() ?? "-"}
                   </span>
                   <span className="text-sm font-mono tabular-nums text-red-500 font-medium">
-                    {formatOrderbookPrice(price, orderbook.currency)}
+                    {formatOrderbookPrice(price, displayCurrency)}
                   </span>
                 </div>
               </button>
@@ -273,7 +297,7 @@ export function OrderbookPanel({
         <div className="bg-slate-100 dark:bg-slate-800 px-3 py-2 flex items-center justify-between">
           <span className="text-xs text-slate-500">현재가</span>
           <span className="font-mono font-bold text-sm">
-            {formatOrderbookPrice(orderbook.current_price, orderbook.currency)}
+            {formatOrderbookPrice(displayCurrentPrice, displayCurrency)}
           </span>
         </div>
 
@@ -298,7 +322,7 @@ export function OrderbookPanel({
                 {/* Content */}
                 <div className="relative z-10 flex items-center justify-between w-full px-3 py-1.5">
                   <span className="text-sm font-mono tabular-nums text-blue-500 font-medium">
-                    {formatOrderbookPrice(price, orderbook.currency)}
+                    {formatOrderbookPrice(price, displayCurrency)}
                   </span>
                   <span className="text-xs text-slate-500 font-mono tabular-nums">
                     {volume?.toLocaleString() ?? "-"}
@@ -314,15 +338,60 @@ export function OrderbookPanel({
       <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
         <div className="flex items-center gap-1">
           <span className="w-2 h-2 bg-red-400 rounded-full" />
-          <span>매도 {orderbook.total_ask_volume?.toLocaleString() ?? "-"}</span>
+          <span>매도 {currentOrderbook.total_ask_volume?.toLocaleString() ?? "-"}</span>
         </div>
         <div className="flex items-center gap-1">
           <span className="w-2 h-2 bg-blue-400 rounded-full" />
-          <span>매수 {orderbook.total_bid_volume?.toLocaleString() ?? "-"}</span>
+          <span>매수 {currentOrderbook.total_bid_volume?.toLocaleString() ?? "-"}</span>
         </div>
       </div>
     </div>
   );
+}
+
+function normalizeOrderbookForStock(
+  next: Partial<OrderbookData> | null | undefined,
+  stockCode: string,
+  stockName?: string,
+  exchange?: string | null,
+  currency?: string | null
+): OrderbookData | null {
+  if (!next || hasMismatchedStockCode(next.stock_code, stockCode)) return null;
+  const normalizedCode = normalizeStockCode(stockCode);
+
+  return {
+    stock_code: normalizedCode,
+    stock_name: next.stock_name ?? stockName ?? normalizedCode,
+    current_price: numberOr(next.current_price, 0),
+    ask_prices: Array.isArray(next.ask_prices) ? next.ask_prices : [],
+    ask_volumes: Array.isArray(next.ask_volumes) ? next.ask_volumes : [],
+    bid_prices: Array.isArray(next.bid_prices) ? next.bid_prices : [],
+    bid_volumes: Array.isArray(next.bid_volumes) ? next.bid_volumes : [],
+    total_ask_volume: numberOr(next.total_ask_volume, 0),
+    total_bid_volume: numberOr(next.total_bid_volume, 0),
+    expected_price: numberOr(next.expected_price, 0),
+    expected_volume: numberOr(next.expected_volume, 0),
+    timestamp: next.timestamp ?? null,
+    source: next.source,
+    exchange: next.exchange ?? exchange ?? undefined,
+    currency: next.currency ?? currency ?? undefined,
+  };
+}
+
+function isOrderbookForStock(orderbook: OrderbookData | null, stockCode: string) {
+  return Boolean(orderbook?.stock_code) && normalizeStockCode(orderbook?.stock_code) === normalizeStockCode(stockCode);
+}
+
+function hasMismatchedStockCode(incomingCode: string | null | undefined, expectedCode: string) {
+  return Boolean(incomingCode) && normalizeStockCode(incomingCode) !== normalizeStockCode(expectedCode);
+}
+
+function normalizeStockCode(code: string | null | undefined) {
+  return String(code || "").trim().toUpperCase();
+}
+
+function numberOr(value: number | null | undefined, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function formatOrderbookPrice(value: number | null | undefined, currency?: string | null) {

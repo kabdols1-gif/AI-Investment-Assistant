@@ -111,7 +111,7 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
           const code = normalizeQuoteCode(payload.stock_code ?? payload.data?.stock_code);
           if (payload.type !== "price" || !isKrxQuoteCode(code) || !payload.data) return;
 
-          const current = quoteCache.get(code) ?? null;
+          const current = getCachedQuote(code);
           const quote = mergeRealtimeQuote(code, current, {
             ...payload.data,
             source: payload.source === "kis_realtime" ? "kis_realtime" : payload.data.source,
@@ -160,13 +160,13 @@ export function useMarketQuotes(codes: Array<string | null | undefined>, options
 
 function buildQuoteMap(codes: string[], quoteResults: QuoteMap) {
   return codes.reduce<QuoteMap>((map, code) => {
-    map[code] = quoteCache.get(code) ?? quoteResults[code] ?? null;
+    map[code] = getCachedQuote(code) ?? quoteResults[code] ?? null;
     return map;
   }, {});
 }
 
 async function requestQuote(code: string, envDv: string, forceRefresh = false, exchange?: string | null) {
-  const cached = quoteCache.get(code);
+  const cached = getCachedQuote(code);
   if (cached && !forceRefresh && hasLivePrice(cached)) return cached;
 
   const requestKey = `${envDv}:${exchange || "-"}:${code}`;
@@ -176,10 +176,11 @@ async function requestQuote(code: string, envDv: string, forceRefresh = false, e
   const request = getKbCurrentPrice(code, envDv, exchange)
     .then((response) => {
       const quote = response.status === "success" ? response.data ?? null : null;
-      if (quote && hasLivePrice(quote)) {
-        quoteCache.set(code, quote);
+      const scopedQuote = quote ? normalizeIncomingQuote(code, quote) : null;
+      if (scopedQuote && hasLivePrice(scopedQuote)) {
+        quoteCache.set(code, scopedQuote);
       }
-      return quote;
+      return scopedQuote;
     })
     .catch(() => null)
     .finally(() => {
@@ -208,6 +209,23 @@ function mergeRealtimeQuote(code: string, current: PriceData | null, next: Parti
     source: next.source ?? current?.source ?? "kis_realtime",
     exchange: next.exchange ?? current?.exchange,
     currency: next.currency ?? current?.currency,
+  };
+}
+
+function getCachedQuote(code: string) {
+  const normalizedCode = normalizeQuoteCode(code);
+  const cached = quoteCache.get(normalizedCode);
+  if (!cached) return null;
+  return normalizeQuoteCode(cached.stock_code) === normalizedCode ? cached : null;
+}
+
+function normalizeIncomingQuote(code: string, quote: PriceData): PriceData | null {
+  const normalizedCode = normalizeQuoteCode(code);
+  const incomingCode = normalizeQuoteCode(quote.stock_code ?? normalizedCode);
+  if (incomingCode !== normalizedCode) return null;
+  return {
+    ...quote,
+    stock_code: normalizedCode,
   };
 }
 
