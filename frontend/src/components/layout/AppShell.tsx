@@ -2525,11 +2525,12 @@ function MobileBottomNav({ onOpenVoice }: { onOpenVoice: () => void }) {
     { href: "/watchlist", label: "관심", icon: Heart },
     { href: "/my-strategy", label: "전략", icon: ShieldCheck },
     { href: "/assets", label: "자산", icon: WalletCards },
+    { href: "/logs", label: "로그", icon: ScrollText },
   ];
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white px-4 pb-3 pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] lg:hidden" aria-label="모바일 하단 메뉴">
-      <div className="grid grid-cols-5 items-end gap-1">
+      <div className="grid grid-cols-6 items-end gap-1">
         {items.slice(0, 2).map((item) => (
           <MobileNavLink key={item.href} {...item} active={pathname === item.href} />
         ))}
